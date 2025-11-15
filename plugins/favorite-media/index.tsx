@@ -143,7 +143,6 @@ function createOverlay(state) {
   overlay.role = "button";
   overlay.tabIndex = 0;
   overlay.dataset.pulse = "false";
-  // overlay.dataset.position = state.entry.isEmbedGif ? "right" : "left";
   
   const hollowStar = '<svg class="favorite-media-icon favorite-media-icon-hollow" aria-hidden="true" role="img" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M2.07 10.94a1.25 1.25 0 0 1 .73-2.25h6.12l1.9-5.83c.37-1.15 2-1.15 2.37 0l1.89 5.83h6.12c1.2 0 1.71 1.54.73 2.25l-4.95 3.6 1.9 5.82a1.25 1.25 0 0 1-1.93 1.4L12 18.16l-4.95 3.6c-.98.7-2.3-.25-1.92-1.4l1.89-5.82-4.95-3.6Zm11.55-.25h5.26l-4.25 3.09 1.62 5-4.25-3.1-4.25 3.1 1.62-5-4.25-3.1h5.26l1.62-5 1.62 5Z" clip-rule="evenodd"></path></svg>';
   const filledStar = '<svg class="favorite-media-icon favorite-media-icon-filled" aria-hidden="true" role="img" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24"><path fill="currentColor" d="M10.81 2.86c.38-1.15 2-1.15 2.38 0l1.89 5.83h6.12c1.2 0 1.71 1.54.73 2.25l-4.95 3.6 1.9 5.82a1.25 1.25 0 0 1-1.93 1.4L12 18.16l-4.95 3.6c-.98.7-2.3-.25-1.92-1.4l1.89-5.82-4.95-3.6a1.25 1.25 0 0 1 .73-2.25h6.12l1.9-5.83Z"></path></svg>';
@@ -240,7 +239,6 @@ export function onLoad() {
       z-index: 5;
       transition: all 0.15s ease-in-out;
     }
-    .favorite-media-accessory[data-position="right"] { left: auto; right: 6px; }
     [data-favorite-media-accessory]:hover .favorite-media-accessory {
       opacity: 0.5;
       transform: translateY(0);

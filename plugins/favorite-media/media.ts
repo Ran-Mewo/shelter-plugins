@@ -44,76 +44,7 @@ export function collectMediaFromMessage(message: Message | undefined | null): Me
     const video = embed.video ?? {};
     const image = embed.image ?? {};
     const thumbnail = embed.thumbnail ?? {};
-    // const type = embed.type;
-
-    // if (type === "gifv") {
-    //   const url = stripDiscordExpiration(embed.url ?? video.url ?? thumbnail.url);
-    //   const src = video.proxyURL ?? thumbnail.proxyURL ?? embed.url;
-    //   if (!url || !src) continue;
-    //   pushEntry({
-    //     url,
-    //     src,
-    //     width: video.width ?? thumbnail.width ?? 0,
-    //     height: video.height ?? thumbnail.height ?? 0,
-    //     format: 2, // gifv are videos
-    //     name: getFilename(url),
-    //   });
-    //   continue;
-    // }
-
-    // if (type === "rich" || type === "article") {
-    //   const url = stripDiscordExpiration(embed.url ?? video.url ?? thumbnail.url);
-    //   const src = image.proxyURL ?? video.proxyURL ?? thumbnail.proxyURL ?? embed.url;
-    //   const contentType = image.contentType ?? video.contentType ?? thumbnail.contentType ?? "";
-    //   if (!url || !src) continue;
-    //   const isVideo = contentType.includes("video");
-    //   const isImage = contentType.includes("image");
-    //   if (!isVideo && !isImage) continue;
-    //   const isGif = contentType.includes("gif");
-    //   pushEntry({
-    //     url,
-    //     src,
-    //     width: image.width ?? video.width ?? thumbnail.width ?? 0,
-    //     height: image.height ?? video.height ?? thumbnail.height ?? 0,
-    //     format: isVideo || isGif ? 2 : 1,
-    //     isVideo,
-    //     isEmbedGif: isGif,
-    //     name: getFilename(url),
-    //   });
-    //   continue;
-    // }
-
-    // if (type === "image") {
-    //   const url = stripDiscordExpiration(embed.url ?? image.url ?? thumbnail.url);
-    //   const src = image.proxyURL ?? thumbnail.proxyURL ?? embed.url;
-    //   if (!url || !src) continue;
-    //   pushEntry({
-    //     url,
-    //     src,
-    //     width: image.width ?? thumbnail.width ?? 0,
-    //     height: image.height ?? thumbnail.height ?? 0,
-    //     format: 1,
-    //     isVideo: false,
-    //     name: getFilename(url),
-    //   });
-    //   continue;
-    // }
-
-    // if (type === "video") {
-    //   const url = stripDiscordExpiration(embed.url ?? video.url ?? thumbnail.url);
-    //   const src = video.proxyURL ?? thumbnail.proxyURL ?? embed.url;
-    //   if (!url || !src) continue;
-    //   pushEntry({
-    //     url,
-    //     src,
-    //     width: video.width ?? thumbnail.width ?? 0,
-    //     height: video.height ?? thumbnail.height ?? 0,
-    //     format: src === thumbnail.proxyURL ? 1 : 2,
-    //     isVideo: true,
-    //     name: getFilename(url),
-    //   });
-    // }
-
+    
     const url = stripDiscordExpiration(embed.url ?? video.url ?? thumbnail.url);
     const src = image.proxyURL ?? video.proxyURL ?? thumbnail.proxyURL ?? embed.url;
     if (!url || !src) continue;
