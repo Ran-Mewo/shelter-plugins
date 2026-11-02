@@ -459,142 +459,184 @@ function onUnload() {
 }
 
 //#endregion
-//#region node_modules/@protobuf-ts/runtime/build/es2015/reflection-binary-reader.js
-var ReflectionBinaryReader;
-var init_reflection_binary_reader = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015/reflection-binary-reader.js"() {
-	init_binary_format_contract();
+//#region node_modules/@protobuf-ts/runtime/build/es2015/reflection-json-writer.js
+var ReflectionJsonWriter;
+var init_reflection_json_writer = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015/reflection-json-writer.js"() {
+	init_base64();
+	init_pb_long();
 	init_reflection_info();
-	init_reflection_long_convert();
-	init_reflection_scalar_default();
-	ReflectionBinaryReader = class {
+	init_assert();
+	ReflectionJsonWriter = class {
 		constructor(info) {
-			this.info = info;
-		}
-		prepare() {
 			var _a;
-			if (!this.fieldNoToField) {
-				const fieldsInput = (_a = this.info.fields) !== null && _a !== void 0 ? _a : [];
-				this.fieldNoToField = new Map(fieldsInput.map((field) => [field.no, field]));
-			}
+			this.fields = (_a = info.fields) !== null && _a !== void 0 ? _a : [];
 		}
 		/**
-		* Reads a message from binary format into the target message.
-		*
-		* Repeated fields are appended. Map entries are added, overwriting
-		* existing keys.
-		*
-		* If a message field is already present, it will be merged with the
-		* new data.
+		* Converts the message to a JSON object, based on the field descriptors.
 		*/
-		read(reader, message, options, length) {
-			this.prepare();
-			const end = length === undefined ? reader.len : reader.pos + length;
-			while (reader.pos < end) {
-				const [fieldNo, wireType] = reader.tag(), field = this.fieldNoToField.get(fieldNo);
-				if (!field) {
-					let u = options.readUnknownField;
-					if (u == "throw") throw new Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.info.typeName}`);
-					let d = reader.skip(wireType);
-					if (u !== false) (u === true ? UnknownFieldHandler.onRead : u)(this.info.typeName, message, fieldNo, wireType, d);
+		write(message, options) {
+			const json = {}, source = message;
+			for (const field of this.fields) {
+				if (!field.oneof) {
+					let jsonValue$1 = this.field(field, source[field.localName], options);
+					if (jsonValue$1 !== undefined) json[options.useProtoFieldName ? field.name : field.jsonName] = jsonValue$1;
 					continue;
 				}
-				let target = message, repeated = field.repeat, localName = field.localName;
-				if (field.oneof) {
-					target = target[field.oneof];
-					if (target.oneofKind !== localName) target = message[field.oneof] = { oneofKind: localName };
-				}
-				switch (field.kind) {
-					case "scalar":
-					case "enum":
-						let T = field.kind == "enum" ? ScalarType.INT32 : field.T;
-						let L = field.kind == "scalar" ? field.L : undefined;
-						if (repeated) {
-							let arr = target[localName];
-							if (wireType == WireType.LengthDelimited && T != ScalarType.STRING && T != ScalarType.BYTES) {
-								let e = reader.uint32() + reader.pos;
-								while (reader.pos < e) arr.push(this.scalar(reader, T, L));
-							} else arr.push(this.scalar(reader, T, L));
-						} else target[localName] = this.scalar(reader, T, L);
-						break;
-					case "message":
-						if (repeated) {
-							let arr = target[localName];
-							let msg = field.T().internalBinaryRead(reader, reader.uint32(), options);
-							arr.push(msg);
-						} else target[localName] = field.T().internalBinaryRead(reader, reader.uint32(), options, target[localName]);
-						break;
-					case "map":
-						let [mapKey, mapVal] = this.mapEntry(field, reader, options);
-						target[localName][mapKey] = mapVal;
-						break;
-				}
+				const group = source[field.oneof];
+				if (group.oneofKind !== field.localName) continue;
+				const opt = field.kind == "scalar" || field.kind == "enum" ? Object.assign(Object.assign({}, options), { emitDefaultValues: true }) : options;
+				let jsonValue = this.field(field, group[field.localName], opt);
+				assert(jsonValue !== undefined);
+				json[options.useProtoFieldName ? field.name : field.jsonName] = jsonValue;
 			}
+			return json;
 		}
-		/**
-		* Read a map field, expecting key field = 1, value field = 2
-		*/
-		mapEntry(field, reader, options) {
-			let length = reader.uint32();
-			let end = reader.pos + length;
-			let key = undefined;
-			let val = undefined;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						if (field.K == ScalarType.BOOL) key = reader.bool().toString();
-else key = this.scalar(reader, field.K, LongType.STRING);
-						break;
-					case 2:
-						switch (field.V.kind) {
-							case "scalar":
-								val = this.scalar(reader, field.V.T, field.V.L);
-								break;
-							case "enum":
-								val = reader.int32();
-								break;
-							case "message":
-								val = field.V.T().internalBinaryRead(reader, reader.uint32(), options);
-								break;
+		field(field, value, options) {
+			let jsonValue = undefined;
+			if (field.kind == "map") {
+				assert(typeof value == "object" && value !== null);
+				const jsonObj = {};
+				switch (field.V.kind) {
+					case "scalar":
+						for (const [entryKey, entryValue] of Object.entries(value)) {
+							const val = this.scalar(field.V.T, entryValue, field.name, false, true);
+							assert(val !== undefined);
+							jsonObj[entryKey.toString()] = val;
 						}
 						break;
-					default: throw new Error(`Unknown field ${fieldNo} (wire type ${wireType}) in map entry for ${this.info.typeName}#${field.name}`);
+					case "message":
+						const messageType = field.V.T();
+						for (const [entryKey, entryValue] of Object.entries(value)) {
+							const val = this.message(messageType, entryValue, field.name, options);
+							assert(val !== undefined);
+							jsonObj[entryKey.toString()] = val;
+						}
+						break;
+					case "enum":
+						const enumInfo = field.V.T();
+						for (const [entryKey, entryValue] of Object.entries(value)) {
+							assert(entryValue === undefined || typeof entryValue == "number");
+							const val = this.enum(enumInfo, entryValue, field.name, false, true, options.enumAsInteger);
+							assert(val !== undefined);
+							jsonObj[entryKey.toString()] = val;
+						}
+						break;
 				}
-			}
-			if (key === undefined) {
-				let keyRaw = reflectionScalarDefault(field.K);
-				key = field.K == ScalarType.BOOL ? keyRaw.toString() : keyRaw;
-			}
-			if (val === undefined) switch (field.V.kind) {
+				if (options.emitDefaultValues || Object.keys(jsonObj).length > 0) jsonValue = jsonObj;
+			} else if (field.repeat) {
+				assert(Array.isArray(value));
+				const jsonArr = [];
+				switch (field.kind) {
+					case "scalar":
+						for (let i = 0; i < value.length; i++) {
+							const val = this.scalar(field.T, value[i], field.name, field.opt, true);
+							assert(val !== undefined);
+							jsonArr.push(val);
+						}
+						break;
+					case "enum":
+						const enumInfo = field.T();
+						for (let i = 0; i < value.length; i++) {
+							assert(value[i] === undefined || typeof value[i] == "number");
+							const val = this.enum(enumInfo, value[i], field.name, field.opt, true, options.enumAsInteger);
+							assert(val !== undefined);
+							jsonArr.push(val);
+						}
+						break;
+					case "message":
+						const messageType = field.T();
+						for (let i = 0; i < value.length; i++) {
+							const val = this.message(messageType, value[i], field.name, options);
+							assert(val !== undefined);
+							jsonArr.push(val);
+						}
+						break;
+				}
+				if (options.emitDefaultValues || jsonArr.length > 0 || options.emitDefaultValues) jsonValue = jsonArr;
+			} else switch (field.kind) {
 				case "scalar":
-					val = reflectionScalarDefault(field.V.T, field.V.L);
+					jsonValue = this.scalar(field.T, value, field.name, field.opt, options.emitDefaultValues);
 					break;
 				case "enum":
-					val = 0;
+					jsonValue = this.enum(field.T(), value, field.name, field.opt, options.emitDefaultValues, options.enumAsInteger);
 					break;
 				case "message":
-					val = field.V.T().create();
+					jsonValue = this.message(field.T(), value, field.name, options);
 					break;
 			}
-			return [key, val];
+			return jsonValue;
 		}
-		scalar(reader, type, longType) {
+		/**
+		* Returns `null` as the default for google.protobuf.NullValue.
+		*/
+		enum(type, value, fieldName, optional, emitDefaultValues, enumAsInteger) {
+			if (type[0] == "google.protobuf.NullValue") return !emitDefaultValues && !optional ? undefined : null;
+			if (value === undefined) {
+				assert(optional);
+				return undefined;
+			}
+			if (value === 0 && !emitDefaultValues && !optional) return undefined;
+			assert(typeof value == "number");
+			assert(Number.isInteger(value));
+			if (enumAsInteger || !type[1].hasOwnProperty(value)) return value;
+			if (type[2]) return type[2] + type[1][value];
+			return type[1][value];
+		}
+		message(type, value, fieldName, options) {
+			if (value === undefined) return options.emitDefaultValues ? null : undefined;
+			return type.internalJsonWrite(value, options);
+		}
+		scalar(type, value, fieldName, optional, emitDefaultValues) {
+			if (value === undefined) {
+				assert(optional);
+				return undefined;
+			}
+			const ed = emitDefaultValues || optional;
 			switch (type) {
-				case ScalarType.INT32: return reader.int32();
-				case ScalarType.STRING: return reader.string();
-				case ScalarType.BOOL: return reader.bool();
-				case ScalarType.DOUBLE: return reader.double();
-				case ScalarType.FLOAT: return reader.float();
-				case ScalarType.INT64: return reflectionLongConvert(reader.int64(), longType);
-				case ScalarType.UINT64: return reflectionLongConvert(reader.uint64(), longType);
-				case ScalarType.FIXED64: return reflectionLongConvert(reader.fixed64(), longType);
-				case ScalarType.FIXED32: return reader.fixed32();
-				case ScalarType.BYTES: return reader.bytes();
-				case ScalarType.UINT32: return reader.uint32();
-				case ScalarType.SFIXED32: return reader.sfixed32();
-				case ScalarType.SFIXED64: return reflectionLongConvert(reader.sfixed64(), longType);
-				case ScalarType.SINT32: return reader.sint32();
-				case ScalarType.SINT64: return reflectionLongConvert(reader.sint64(), longType);
+				case ScalarType.INT32:
+				case ScalarType.SFIXED32:
+				case ScalarType.SINT32:
+					if (value === 0) return ed ? 0 : undefined;
+					assertInt32(value);
+					return value;
+				case ScalarType.FIXED32:
+				case ScalarType.UINT32:
+					if (value === 0) return ed ? 0 : undefined;
+					assertUInt32(value);
+					return value;
+				case ScalarType.FLOAT: assertFloat32(value);
+				case ScalarType.DOUBLE:
+					if (value === 0) return ed ? 0 : undefined;
+					assert(typeof value == "number");
+					if (Number.isNaN(value)) return "NaN";
+					if (value === Number.POSITIVE_INFINITY) return "Infinity";
+					if (value === Number.NEGATIVE_INFINITY) return "-Infinity";
+					return value;
+				case ScalarType.STRING:
+					if (value === "") return ed ? "" : undefined;
+					assert(typeof value == "string");
+					return value;
+				case ScalarType.BOOL:
+					if (value === false) return ed ? false : undefined;
+					assert(typeof value == "boolean");
+					return value;
+				case ScalarType.UINT64:
+				case ScalarType.FIXED64:
+					assert(typeof value == "number" || typeof value == "string" || typeof value == "bigint");
+					let ulong = PbULong.from(value);
+					if (ulong.isZero() && !ed) return undefined;
+					return ulong.toString();
+				case ScalarType.INT64:
+				case ScalarType.SFIXED64:
+				case ScalarType.SINT64:
+					assert(typeof value == "number" || typeof value == "string" || typeof value == "bigint");
+					let long = PbLong.from(value);
+					if (long.isZero() && !ed) return undefined;
+					return long.toString();
+				case ScalarType.BYTES:
+					assert(value instanceof Uint8Array);
+					if (!value.byteLength) return ed ? "" : undefined;
+					return base64encode(value);
 			}
 		}
 	};
@@ -30810,763 +30852,6 @@ else message.placements.push(reader.int32());
 } });
 
 //#endregion
-//#region node_modules/discord-protos/dist/discord_protos/google/protobuf/wrappers.js
-var require_wrappers = __commonJS({ "node_modules/discord-protos/dist/discord_protos/google/protobuf/wrappers.js"(exports) {
-	Object.defineProperty(exports, "__esModule", { value: true });
-	exports.BytesValue = exports.StringValue = exports.BoolValue = exports.UInt32Value = exports.Int32Value = exports.UInt64Value = exports.Int64Value = exports.FloatValue = exports.DoubleValue = void 0;
-	const runtime_1$4 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_2$3 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_3$3 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_4$3 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_5$2 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_6$2 = (init_es2015(), __toCommonJS(es2015_exports));
-	var DoubleValue$Type = class extends runtime_6$2.MessageType {
-		constructor() {
-			super("google.protobuf.DoubleValue", [{
-				no: 1,
-				name: "value",
-				kind: "scalar",
-				T: 1
-			}]);
-		}
-		/**
-		* Encode `DoubleValue` to JSON number.
-		*/
-		internalJsonWrite(message, options) {
-			return this.refJsonWriter.scalar(2, message.value, "value", false, true);
-		}
-		/**
-		* Decode `DoubleValue` from JSON number.
-		*/
-		internalJsonRead(json, options, target) {
-			if (!target) target = this.create();
-			target.value = this.refJsonReader.scalar(json, 1, undefined, "value");
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.value = 0;
-			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.value = reader.double();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_4$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.value !== 0) writer.tag(1, runtime_3$3.WireType.Bit64).double(message.value);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_4$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.DoubleValue
-	*/
-	exports.DoubleValue = new DoubleValue$Type();
-	var FloatValue$Type = class extends runtime_6$2.MessageType {
-		constructor() {
-			super("google.protobuf.FloatValue", [{
-				no: 1,
-				name: "value",
-				kind: "scalar",
-				T: 2
-			}]);
-		}
-		/**
-		* Encode `FloatValue` to JSON number.
-		*/
-		internalJsonWrite(message, options) {
-			return this.refJsonWriter.scalar(1, message.value, "value", false, true);
-		}
-		/**
-		* Decode `FloatValue` from JSON number.
-		*/
-		internalJsonRead(json, options, target) {
-			if (!target) target = this.create();
-			target.value = this.refJsonReader.scalar(json, 1, undefined, "value");
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.value = 0;
-			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.value = reader.float();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_4$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.value !== 0) writer.tag(1, runtime_3$3.WireType.Bit32).float(message.value);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_4$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.FloatValue
-	*/
-	exports.FloatValue = new FloatValue$Type();
-	var Int64Value$Type = class extends runtime_6$2.MessageType {
-		constructor() {
-			super("google.protobuf.Int64Value", [{
-				no: 1,
-				name: "value",
-				kind: "scalar",
-				T: 3,
-				L: 0
-			}]);
-		}
-		/**
-		* Encode `Int64Value` to JSON string.
-		*/
-		internalJsonWrite(message, options) {
-			return this.refJsonWriter.scalar(runtime_1$4.ScalarType.INT64, message.value, "value", false, true);
-		}
-		/**
-		* Decode `Int64Value` from JSON string.
-		*/
-		internalJsonRead(json, options, target) {
-			if (!target) target = this.create();
-			target.value = this.refJsonReader.scalar(json, runtime_1$4.ScalarType.INT64, runtime_2$3.LongType.BIGINT, "value");
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.value = 0n;
-			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.value = reader.int64().toBigInt();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_4$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.value !== 0n) writer.tag(1, runtime_3$3.WireType.Varint).int64(message.value);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_4$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.Int64Value
-	*/
-	exports.Int64Value = new Int64Value$Type();
-	var UInt64Value$Type = class extends runtime_6$2.MessageType {
-		constructor() {
-			super("google.protobuf.UInt64Value", [{
-				no: 1,
-				name: "value",
-				kind: "scalar",
-				T: 4,
-				L: 0
-			}]);
-		}
-		/**
-		* Encode `UInt64Value` to JSON string.
-		*/
-		internalJsonWrite(message, options) {
-			return this.refJsonWriter.scalar(runtime_1$4.ScalarType.UINT64, message.value, "value", false, true);
-		}
-		/**
-		* Decode `UInt64Value` from JSON string.
-		*/
-		internalJsonRead(json, options, target) {
-			if (!target) target = this.create();
-			target.value = this.refJsonReader.scalar(json, runtime_1$4.ScalarType.UINT64, runtime_2$3.LongType.BIGINT, "value");
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.value = 0n;
-			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.value = reader.uint64().toBigInt();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_4$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.value !== 0n) writer.tag(1, runtime_3$3.WireType.Varint).uint64(message.value);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_4$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.UInt64Value
-	*/
-	exports.UInt64Value = new UInt64Value$Type();
-	var Int32Value$Type = class extends runtime_6$2.MessageType {
-		constructor() {
-			super("google.protobuf.Int32Value", [{
-				no: 1,
-				name: "value",
-				kind: "scalar",
-				T: 5
-			}]);
-		}
-		/**
-		* Encode `Int32Value` to JSON string.
-		*/
-		internalJsonWrite(message, options) {
-			return this.refJsonWriter.scalar(5, message.value, "value", false, true);
-		}
-		/**
-		* Decode `Int32Value` from JSON string.
-		*/
-		internalJsonRead(json, options, target) {
-			if (!target) target = this.create();
-			target.value = this.refJsonReader.scalar(json, 5, undefined, "value");
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.value = 0;
-			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.value = reader.int32();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_4$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.value !== 0) writer.tag(1, runtime_3$3.WireType.Varint).int32(message.value);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_4$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.Int32Value
-	*/
-	exports.Int32Value = new Int32Value$Type();
-	var UInt32Value$Type = class extends runtime_6$2.MessageType {
-		constructor() {
-			super("google.protobuf.UInt32Value", [{
-				no: 1,
-				name: "value",
-				kind: "scalar",
-				T: 13
-			}]);
-		}
-		/**
-		* Encode `UInt32Value` to JSON string.
-		*/
-		internalJsonWrite(message, options) {
-			return this.refJsonWriter.scalar(13, message.value, "value", false, true);
-		}
-		/**
-		* Decode `UInt32Value` from JSON string.
-		*/
-		internalJsonRead(json, options, target) {
-			if (!target) target = this.create();
-			target.value = this.refJsonReader.scalar(json, 13, undefined, "value");
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.value = 0;
-			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.value = reader.uint32();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_4$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.value !== 0) writer.tag(1, runtime_3$3.WireType.Varint).uint32(message.value);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_4$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.UInt32Value
-	*/
-	exports.UInt32Value = new UInt32Value$Type();
-	var BoolValue$Type = class extends runtime_6$2.MessageType {
-		constructor() {
-			super("google.protobuf.BoolValue", [{
-				no: 1,
-				name: "value",
-				kind: "scalar",
-				T: 8
-			}]);
-		}
-		/**
-		* Encode `BoolValue` to JSON bool.
-		*/
-		internalJsonWrite(message, options) {
-			return message.value;
-		}
-		/**
-		* Decode `BoolValue` from JSON bool.
-		*/
-		internalJsonRead(json, options, target) {
-			if (!target) target = this.create();
-			target.value = this.refJsonReader.scalar(json, 8, undefined, "value");
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.value = false;
-			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.value = reader.bool();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_4$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.value !== false) writer.tag(1, runtime_3$3.WireType.Varint).bool(message.value);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_4$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.BoolValue
-	*/
-	exports.BoolValue = new BoolValue$Type();
-	var StringValue$Type = class extends runtime_6$2.MessageType {
-		constructor() {
-			super("google.protobuf.StringValue", [{
-				no: 1,
-				name: "value",
-				kind: "scalar",
-				T: 9
-			}]);
-		}
-		/**
-		* Encode `StringValue` to JSON string.
-		*/
-		internalJsonWrite(message, options) {
-			return message.value;
-		}
-		/**
-		* Decode `StringValue` from JSON string.
-		*/
-		internalJsonRead(json, options, target) {
-			if (!target) target = this.create();
-			target.value = this.refJsonReader.scalar(json, 9, undefined, "value");
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.value = "";
-			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.value = reader.string();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_4$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.value !== "") writer.tag(1, runtime_3$3.WireType.LengthDelimited).string(message.value);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_4$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.StringValue
-	*/
-	exports.StringValue = new StringValue$Type();
-	var BytesValue$Type = class extends runtime_6$2.MessageType {
-		constructor() {
-			super("google.protobuf.BytesValue", [{
-				no: 1,
-				name: "value",
-				kind: "scalar",
-				T: 12
-			}]);
-		}
-		/**
-		* Encode `BytesValue` to JSON string.
-		*/
-		internalJsonWrite(message, options) {
-			return this.refJsonWriter.scalar(12, message.value, "value", false, true);
-		}
-		/**
-		* Decode `BytesValue` from JSON string.
-		*/
-		internalJsonRead(json, options, target) {
-			if (!target) target = this.create();
-			target.value = this.refJsonReader.scalar(json, 12, undefined, "value");
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.value = new Uint8Array(0);
-			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.value = reader.bytes();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_4$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.value.length) writer.tag(1, runtime_3$3.WireType.LengthDelimited).bytes(message.value);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_4$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.BytesValue
-	*/
-	exports.BytesValue = new BytesValue$Type();
-} });
-
-//#endregion
-//#region node_modules/discord-protos/dist/discord_protos/google/protobuf/timestamp.js
-var require_timestamp = __commonJS({ "node_modules/discord-protos/dist/discord_protos/google/protobuf/timestamp.js"(exports) {
-	Object.defineProperty(exports, "__esModule", { value: true });
-	exports.Timestamp = void 0;
-	const runtime_1$3 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_2$2 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_3$2 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_4$2 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_5$1 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_6$1 = (init_es2015(), __toCommonJS(es2015_exports));
-	var Timestamp$Type = class extends runtime_6$1.MessageType {
-		constructor() {
-			super("google.protobuf.Timestamp", [{
-				no: 1,
-				name: "seconds",
-				kind: "scalar",
-				T: 3,
-				L: 0
-			}, {
-				no: 2,
-				name: "nanos",
-				kind: "scalar",
-				T: 5
-			}]);
-		}
-		/**
-		* Creates a new `Timestamp` for the current time.
-		*/
-		now() {
-			const msg = this.create();
-			const ms = Date.now();
-			msg.seconds = runtime_5$1.PbLong.from(Math.floor(ms / 1e3)).toBigInt();
-			msg.nanos = ms % 1e3 * 1e6;
-			return msg;
-		}
-		/**
-		* Converts a `Timestamp` to a JavaScript Date.
-		*/
-		toDate(message) {
-			return new Date(runtime_5$1.PbLong.from(message.seconds).toNumber() * 1e3 + Math.ceil(message.nanos / 1e6));
-		}
-		/**
-		* Converts a JavaScript Date to a `Timestamp`.
-		*/
-		fromDate(date) {
-			const msg = this.create();
-			const ms = date.getTime();
-			msg.seconds = runtime_5$1.PbLong.from(Math.floor(ms / 1e3)).toBigInt();
-			msg.nanos = (ms % 1e3 + (ms < 0 && ms % 1e3 !== 0 ? 1e3 : 0)) * 1e6;
-			return msg;
-		}
-		/**
-		* In JSON format, the `Timestamp` type is encoded as a string
-		* in the RFC 3339 format.
-		*/
-		internalJsonWrite(message, options) {
-			let ms = runtime_5$1.PbLong.from(message.seconds).toNumber() * 1e3;
-			if (ms < Date.parse("0001-01-01T00:00:00Z") || ms > Date.parse("9999-12-31T23:59:59Z")) throw new Error("Unable to encode Timestamp to JSON. Must be from 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z inclusive.");
-			if (message.nanos < 0) throw new Error("Unable to encode invalid Timestamp to JSON. Nanos must not be negative.");
-			let z = "Z";
-			if (message.nanos > 0) {
-				let nanosStr = (message.nanos + 1e9).toString().substring(1);
-				if (nanosStr.substring(3) === "000000") z = "." + nanosStr.substring(0, 3) + "Z";
-else if (nanosStr.substring(6) === "000") z = "." + nanosStr.substring(0, 6) + "Z";
-else z = "." + nanosStr + "Z";
-			}
-			return new Date(ms).toISOString().replace(".000Z", z);
-		}
-		/**
-		* In JSON format, the `Timestamp` type is encoded as a string
-		* in the RFC 3339 format.
-		*/
-		internalJsonRead(json, options, target) {
-			if (typeof json !== "string") throw new Error("Unable to parse Timestamp from JSON " + (0, runtime_4$2.typeofJsonValue)(json) + ".");
-			let matches = json.match(/^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:Z|\.([0-9]{3,9})Z|([+-][0-9][0-9]:[0-9][0-9]))$/);
-			if (!matches) throw new Error("Unable to parse Timestamp from JSON. Invalid format.");
-			let ms = Date.parse(matches[1] + "-" + matches[2] + "-" + matches[3] + "T" + matches[4] + ":" + matches[5] + ":" + matches[6] + (matches[8] ? matches[8] : "Z"));
-			if (Number.isNaN(ms)) throw new Error("Unable to parse Timestamp from JSON. Invalid value.");
-			if (ms < Date.parse("0001-01-01T00:00:00Z") || ms > Date.parse("9999-12-31T23:59:59Z")) throw new globalThis.Error("Unable to parse Timestamp from JSON. Must be from 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z inclusive.");
-			if (!target) target = this.create();
-			target.seconds = runtime_5$1.PbLong.from(ms / 1e3).toBigInt();
-			target.nanos = 0;
-			if (matches[7]) target.nanos = parseInt("1" + matches[7] + "0".repeat(9 - matches[7].length)) - 1e9;
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.seconds = 0n;
-			message.nanos = 0;
-			if (value !== undefined) (0, runtime_3$2.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.seconds = reader.int64().toBigInt();
-						break;
-					case 2:
-						message.nanos = reader.int32();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2$2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.seconds !== 0n) writer.tag(1, runtime_1$3.WireType.Varint).int64(message.seconds);
-			if (message.nanos !== 0) writer.tag(2, runtime_1$3.WireType.Varint).int32(message.nanos);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2$2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.Timestamp
-	*/
-	exports.Timestamp = new Timestamp$Type();
-} });
-
-//#endregion
-//#region node_modules/discord-protos/dist/discord_protos/google/protobuf/duration.js
-var require_duration = __commonJS({ "node_modules/discord-protos/dist/discord_protos/google/protobuf/duration.js"(exports) {
-	Object.defineProperty(exports, "__esModule", { value: true });
-	exports.Duration = void 0;
-	const runtime_1$2 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_2$1 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_3$1 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_4$1 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_5 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_6 = (init_es2015(), __toCommonJS(es2015_exports));
-	var Duration$Type = class extends runtime_6.MessageType {
-		constructor() {
-			super("google.protobuf.Duration", [{
-				no: 1,
-				name: "seconds",
-				kind: "scalar",
-				T: 3,
-				L: 0
-			}, {
-				no: 2,
-				name: "nanos",
-				kind: "scalar",
-				T: 5
-			}]);
-		}
-		/**
-		* Encode `Duration` to JSON string like "3.000001s".
-		*/
-		internalJsonWrite(message, options) {
-			let s = runtime_5.PbLong.from(message.seconds).toNumber();
-			if (s > 315576e6 || s < -315576e6) throw new Error("Duration value out of range.");
-			let text = message.seconds.toString();
-			if (s === 0 && message.nanos < 0) text = "-" + text;
-			if (message.nanos !== 0) {
-				let nanosStr = Math.abs(message.nanos).toString();
-				nanosStr = "0".repeat(9 - nanosStr.length) + nanosStr;
-				if (nanosStr.substring(3) === "000000") nanosStr = nanosStr.substring(0, 3);
-else if (nanosStr.substring(6) === "000") nanosStr = nanosStr.substring(0, 6);
-				text += "." + nanosStr;
-			}
-			return text + "s";
-		}
-		/**
-		* Decode `Duration` from JSON string like "3.000001s"
-		*/
-		internalJsonRead(json, options, target) {
-			if (typeof json !== "string") throw new Error("Unable to parse Duration from JSON " + (0, runtime_4$1.typeofJsonValue)(json) + ". Expected string.");
-			let match = json.match(/^(-?)([0-9]+)(?:\.([0-9]+))?s/);
-			if (match === null) throw new Error("Unable to parse Duration from JSON string. Invalid format.");
-			if (!target) target = this.create();
-			let [, sign, secs, nanos] = match;
-			let longSeconds = runtime_5.PbLong.from(sign + secs);
-			if (longSeconds.toNumber() > 315576e6 || longSeconds.toNumber() < -315576e6) throw new Error("Unable to parse Duration from JSON string. Value out of range.");
-			target.seconds = longSeconds.toBigInt();
-			if (typeof nanos == "string") {
-				let nanosStr = sign + nanos + "0".repeat(9 - nanos.length);
-				target.nanos = parseInt(nanosStr);
-			}
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.seconds = 0n;
-			message.nanos = 0;
-			if (value !== undefined) (0, runtime_3$1.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.seconds = reader.int64().toBigInt();
-						break;
-					case 2:
-						message.nanos = reader.int32();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2$1.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.seconds !== 0n) writer.tag(1, runtime_1$2.WireType.Varint).int64(message.seconds);
-			if (message.nanos !== 0) writer.tag(2, runtime_1$2.WireType.Varint).int32(message.nanos);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2$1.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.Duration
-	*/
-	exports.Duration = new Duration$Type();
-} });
-
-//#endregion
 //#region node_modules/@protobuf-ts/runtime/build/es2015/json-typings.js
 function typeofJsonValue(value) {
 	let t = typeof value;
@@ -31692,1212 +30977,88 @@ var init_protobufjs_utf8 = __esm({ "node_modules/@protobuf-ts/runtime/build/es20
 } });
 
 //#endregion
-//#region node_modules/discord-protos/dist/discord_protos/discord_users/v1/FrecencyUserSettings.js
-var require_FrecencyUserSettings = __commonJS({ "node_modules/discord-protos/dist/discord_protos/discord_users/v1/FrecencyUserSettings.js"(exports) {
-	Object.defineProperty(exports, "__esModule", { value: true });
-	exports.FrecencyUserSettings_PinnedEmojiPacks = exports.FrecencyUserSettings_GuildAndChannelFrecency = exports.FrecencyUserSettings_PlayedSoundFrecency = exports.FrecencyUserSettings_HeardSoundFrecency = exports.FrecencyUserSettings_ApplicationFrecency = exports.FrecencyUserSettings_FavoriteSoundboardSounds = exports.FrecencyUserSettings_ApplicationCommandFrecency = exports.FrecencyUserSettings_EmojiFrecency = exports.FrecencyUserSettings_FavoriteEmojis = exports.FrecencyUserSettings_StickerFrecency = exports.FrecencyUserSettings_FrecencyItem = exports.FrecencyUserSettings_FavoriteStickers = exports.FrecencyUserSettings_FavoriteGIFs = exports.FrecencyUserSettings_FavoriteGIF = exports.FrecencyUserSettings_Versions = exports.FrecencyUserSettings = exports.FrecencyUserSettings_GIFType = void 0;
-	const runtime_1$1 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_2 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_3 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_4 = (init_es2015(), __toCommonJS(es2015_exports));
-	/**
-	* @generated from protobuf enum discord_protos.discord_users.v1.FrecencyUserSettings.GIFType
-	*/
-	var FrecencyUserSettings_GIFType;
-	(function(FrecencyUserSettings_GIFType$1) {
+//#region node_modules/@protobuf-ts/runtime/build/es2015/binary-format-contract.js
+function mergeBinaryOptions(a, b) {
+	return Object.assign(Object.assign({}, a), b);
+}
+var UnknownFieldHandler, WireType;
+var init_binary_format_contract = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015/binary-format-contract.js"() {
+	(function(UnknownFieldHandler$1) {
 		/**
-		* @generated from protobuf enum value: GIF_TYPE_NONE = 0;
+		* The symbol used to store unknown fields for a message.
+		* The property must conform to `UnknownFieldContainer`.
 		*/
-		FrecencyUserSettings_GIFType$1[FrecencyUserSettings_GIFType$1["GIF_TYPE_NONE"] = 0] = "GIF_TYPE_NONE";
+		UnknownFieldHandler$1.symbol = Symbol.for("protobuf-ts/unknown");
 		/**
-		* @generated from protobuf enum value: GIF_TYPE_IMAGE = 1;
+		* Store an unknown field during binary read directly on the message.
+		* This method is compatible with `BinaryReadOptions.readUnknownField`.
 		*/
-		FrecencyUserSettings_GIFType$1[FrecencyUserSettings_GIFType$1["GIF_TYPE_IMAGE"] = 1] = "GIF_TYPE_IMAGE";
+		UnknownFieldHandler$1.onRead = (typeName, message, fieldNo, wireType, data) => {
+			let container = is(message) ? message[UnknownFieldHandler$1.symbol] : message[UnknownFieldHandler$1.symbol] = [];
+			container.push({
+				no: fieldNo,
+				wireType,
+				data
+			});
+		};
 		/**
-		* @generated from protobuf enum value: GIF_TYPE_VIDEO = 2;
+		* Write unknown fields stored for the message to the writer.
+		* This method is compatible with `BinaryWriteOptions.writeUnknownFields`.
 		*/
-		FrecencyUserSettings_GIFType$1[FrecencyUserSettings_GIFType$1["GIF_TYPE_VIDEO"] = 2] = "GIF_TYPE_VIDEO";
-	})(FrecencyUserSettings_GIFType || (exports.FrecencyUserSettings_GIFType = FrecencyUserSettings_GIFType = {}));
-	var FrecencyUserSettings$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings", [
-				{
-					no: 1,
-					name: "versions",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_Versions
-				},
-				{
-					no: 2,
-					name: "favorite_gifs",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FavoriteGIFs
-				},
-				{
-					no: 3,
-					name: "favorite_stickers",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FavoriteStickers
-				},
-				{
-					no: 4,
-					name: "sticker_frecency",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_StickerFrecency
-				},
-				{
-					no: 5,
-					name: "favorite_emojis",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FavoriteEmojis
-				},
-				{
-					no: 6,
-					name: "emoji_frecency",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_EmojiFrecency
-				},
-				{
-					no: 7,
-					name: "application_command_frecency",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_ApplicationCommandFrecency
-				},
-				{
-					no: 8,
-					name: "favorite_soundboard_sounds",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FavoriteSoundboardSounds
-				},
-				{
-					no: 9,
-					name: "application_frecency",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_ApplicationFrecency
-				},
-				{
-					no: 10,
-					name: "heard_sound_frecency",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_HeardSoundFrecency
-				},
-				{
-					no: 11,
-					name: "played_sound_frecency",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_PlayedSoundFrecency
-				},
-				{
-					no: 12,
-					name: "guild_and_channel_frecency",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_GuildAndChannelFrecency
-				},
-				{
-					no: 13,
-					name: "emoji_reaction_frecency",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_EmojiFrecency
-				},
-				{
-					no: 14,
-					name: "pinned_emoji_packs",
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_PinnedEmojiPacks
-				}
-			]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.versions = exports.FrecencyUserSettings_Versions.internalBinaryRead(reader, reader.uint32(), options, message.versions);
-						break;
-					case 2:
-						message.favoriteGifs = exports.FrecencyUserSettings_FavoriteGIFs.internalBinaryRead(reader, reader.uint32(), options, message.favoriteGifs);
-						break;
-					case 3:
-						message.favoriteStickers = exports.FrecencyUserSettings_FavoriteStickers.internalBinaryRead(reader, reader.uint32(), options, message.favoriteStickers);
-						break;
-					case 4:
-						message.stickerFrecency = exports.FrecencyUserSettings_StickerFrecency.internalBinaryRead(reader, reader.uint32(), options, message.stickerFrecency);
-						break;
-					case 5:
-						message.favoriteEmojis = exports.FrecencyUserSettings_FavoriteEmojis.internalBinaryRead(reader, reader.uint32(), options, message.favoriteEmojis);
-						break;
-					case 6:
-						message.emojiFrecency = exports.FrecencyUserSettings_EmojiFrecency.internalBinaryRead(reader, reader.uint32(), options, message.emojiFrecency);
-						break;
-					case 7:
-						message.applicationCommandFrecency = exports.FrecencyUserSettings_ApplicationCommandFrecency.internalBinaryRead(reader, reader.uint32(), options, message.applicationCommandFrecency);
-						break;
-					case 8:
-						message.favoriteSoundboardSounds = exports.FrecencyUserSettings_FavoriteSoundboardSounds.internalBinaryRead(reader, reader.uint32(), options, message.favoriteSoundboardSounds);
-						break;
-					case 9:
-						message.applicationFrecency = exports.FrecencyUserSettings_ApplicationFrecency.internalBinaryRead(reader, reader.uint32(), options, message.applicationFrecency);
-						break;
-					case 10:
-						message.heardSoundFrecency = exports.FrecencyUserSettings_HeardSoundFrecency.internalBinaryRead(reader, reader.uint32(), options, message.heardSoundFrecency);
-						break;
-					case 11:
-						message.playedSoundFrecency = exports.FrecencyUserSettings_PlayedSoundFrecency.internalBinaryRead(reader, reader.uint32(), options, message.playedSoundFrecency);
-						break;
-					case 12:
-						message.guildAndChannelFrecency = exports.FrecencyUserSettings_GuildAndChannelFrecency.internalBinaryRead(reader, reader.uint32(), options, message.guildAndChannelFrecency);
-						break;
-					case 13:
-						message.emojiReactionFrecency = exports.FrecencyUserSettings_EmojiFrecency.internalBinaryRead(reader, reader.uint32(), options, message.emojiReactionFrecency);
-						break;
-					case 14:
-						message.pinnedEmojiPacks = exports.FrecencyUserSettings_PinnedEmojiPacks.internalBinaryRead(reader, reader.uint32(), options, message.pinnedEmojiPacks);
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
+		UnknownFieldHandler$1.onWrite = (typeName, message, writer) => {
+			for (let { no, wireType, data } of UnknownFieldHandler$1.list(message)) writer.tag(no, wireType).raw(data);
+		};
+		/**
+		* List unknown fields stored for the message.
+		* Note that there may be multiples fields with the same number.
+		*/
+		UnknownFieldHandler$1.list = (message, fieldNo) => {
+			if (is(message)) {
+				let all = message[UnknownFieldHandler$1.symbol];
+				return fieldNo ? all.filter((uf) => uf.no == fieldNo) : all;
 			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.versions) exports.FrecencyUserSettings_Versions.internalBinaryWrite(message.versions, writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.favoriteGifs) exports.FrecencyUserSettings_FavoriteGIFs.internalBinaryWrite(message.favoriteGifs, writer.tag(2, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.favoriteStickers) exports.FrecencyUserSettings_FavoriteStickers.internalBinaryWrite(message.favoriteStickers, writer.tag(3, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.stickerFrecency) exports.FrecencyUserSettings_StickerFrecency.internalBinaryWrite(message.stickerFrecency, writer.tag(4, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.favoriteEmojis) exports.FrecencyUserSettings_FavoriteEmojis.internalBinaryWrite(message.favoriteEmojis, writer.tag(5, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.emojiFrecency) exports.FrecencyUserSettings_EmojiFrecency.internalBinaryWrite(message.emojiFrecency, writer.tag(6, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.applicationCommandFrecency) exports.FrecencyUserSettings_ApplicationCommandFrecency.internalBinaryWrite(message.applicationCommandFrecency, writer.tag(7, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.favoriteSoundboardSounds) exports.FrecencyUserSettings_FavoriteSoundboardSounds.internalBinaryWrite(message.favoriteSoundboardSounds, writer.tag(8, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.applicationFrecency) exports.FrecencyUserSettings_ApplicationFrecency.internalBinaryWrite(message.applicationFrecency, writer.tag(9, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.heardSoundFrecency) exports.FrecencyUserSettings_HeardSoundFrecency.internalBinaryWrite(message.heardSoundFrecency, writer.tag(10, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.playedSoundFrecency) exports.FrecencyUserSettings_PlayedSoundFrecency.internalBinaryWrite(message.playedSoundFrecency, writer.tag(11, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.guildAndChannelFrecency) exports.FrecencyUserSettings_GuildAndChannelFrecency.internalBinaryWrite(message.guildAndChannelFrecency, writer.tag(12, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.emojiReactionFrecency) exports.FrecencyUserSettings_EmojiFrecency.internalBinaryWrite(message.emojiReactionFrecency, writer.tag(13, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			if (message.pinnedEmojiPacks) exports.FrecencyUserSettings_PinnedEmojiPacks.internalBinaryWrite(message.pinnedEmojiPacks, writer.tag(14, runtime_1$1.WireType.LengthDelimited).fork(), options).join();
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings
-	*/
-	exports.FrecencyUserSettings = new FrecencyUserSettings$Type();
-	var FrecencyUserSettings_Versions$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.Versions", [
-				{
-					no: 1,
-					name: "client_version",
-					kind: "scalar",
-					T: 13
-				},
-				{
-					no: 2,
-					name: "server_version",
-					kind: "scalar",
-					T: 13
-				},
-				{
-					no: 3,
-					name: "data_version",
-					kind: "scalar",
-					T: 13
-				}
-			]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.clientVersion = 0;
-			message.serverVersion = 0;
-			message.dataVersion = 0;
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.clientVersion = reader.uint32();
-						break;
-					case 2:
-						message.serverVersion = reader.uint32();
-						break;
-					case 3:
-						message.dataVersion = reader.uint32();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.clientVersion !== 0) writer.tag(1, runtime_1$1.WireType.Varint).uint32(message.clientVersion);
-			if (message.serverVersion !== 0) writer.tag(2, runtime_1$1.WireType.Varint).uint32(message.serverVersion);
-			if (message.dataVersion !== 0) writer.tag(3, runtime_1$1.WireType.Varint).uint32(message.dataVersion);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.Versions
-	*/
-	exports.FrecencyUserSettings_Versions = new FrecencyUserSettings_Versions$Type();
-	var FrecencyUserSettings_FavoriteGIF$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteGIF", [
-				{
-					no: 1,
-					name: "format",
-					kind: "enum",
-					T: () => ["discord_protos.discord_users.v1.FrecencyUserSettings.GIFType", FrecencyUserSettings_GIFType]
-				},
-				{
-					no: 2,
-					name: "src",
-					kind: "scalar",
-					T: 9
-				},
-				{
-					no: 3,
-					name: "width",
-					kind: "scalar",
-					T: 13
-				},
-				{
-					no: 4,
-					name: "height",
-					kind: "scalar",
-					T: 13
-				},
-				{
-					no: 5,
-					name: "order",
-					kind: "scalar",
-					T: 13
-				}
-			]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.format = 0;
-			message.src = "";
-			message.width = 0;
-			message.height = 0;
-			message.order = 0;
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.format = reader.int32();
-						break;
-					case 2:
-						message.src = reader.string();
-						break;
-					case 3:
-						message.width = reader.uint32();
-						break;
-					case 4:
-						message.height = reader.uint32();
-						break;
-					case 5:
-						message.order = reader.uint32();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.format !== 0) writer.tag(1, runtime_1$1.WireType.Varint).int32(message.format);
-			if (message.src !== "") writer.tag(2, runtime_1$1.WireType.LengthDelimited).string(message.src);
-			if (message.width !== 0) writer.tag(3, runtime_1$1.WireType.Varint).uint32(message.width);
-			if (message.height !== 0) writer.tag(4, runtime_1$1.WireType.Varint).uint32(message.height);
-			if (message.order !== 0) writer.tag(5, runtime_1$1.WireType.Varint).uint32(message.order);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteGIF
-	*/
-	exports.FrecencyUserSettings_FavoriteGIF = new FrecencyUserSettings_FavoriteGIF$Type();
-	var FrecencyUserSettings_FavoriteGIFs$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteGIFs", [{
-				no: 1,
-				name: "gifs",
-				kind: "map",
-				K: 9,
-				V: {
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FavoriteGIF
-				}
-			}, {
-				no: 2,
-				name: "hide_tooltip",
-				kind: "scalar",
-				T: 8
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.gifs = {};
-			message.hideTooltip = false;
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						this.binaryReadMap1(message.gifs, reader, options);
-						break;
-					case 2:
-						message.hideTooltip = reader.bool();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		binaryReadMap1(map, reader, options) {
-			let len = reader.uint32(), end = reader.pos + len, key, val;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						key = reader.string();
-						break;
-					case 2:
-						val = exports.FrecencyUserSettings_FavoriteGIF.internalBinaryRead(reader, reader.uint32(), options);
-						break;
-					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteGIFs.gifs");
-				}
-			}
-			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FavoriteGIF.create();
-		}
-		internalBinaryWrite(message, writer, options) {
-			for (let k of globalThis.Object.keys(message.gifs)) {
-				writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork().tag(1, runtime_1$1.WireType.LengthDelimited).string(k);
-				writer.tag(2, runtime_1$1.WireType.LengthDelimited).fork();
-				exports.FrecencyUserSettings_FavoriteGIF.internalBinaryWrite(message.gifs[k], writer, options);
-				writer.join().join();
-			}
-			if (message.hideTooltip !== false) writer.tag(2, runtime_1$1.WireType.Varint).bool(message.hideTooltip);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteGIFs
-	*/
-	exports.FrecencyUserSettings_FavoriteGIFs = new FrecencyUserSettings_FavoriteGIFs$Type();
-	var FrecencyUserSettings_FavoriteStickers$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteStickers", [{
-				no: 1,
-				name: "sticker_ids",
-				kind: "scalar",
-				repeat: 1,
-				T: 6,
-				L: 0
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.stickerIds = [];
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						if (wireType === runtime_1$1.WireType.LengthDelimited) for (let e = reader.int32() + reader.pos; reader.pos < e;) message.stickerIds.push(reader.fixed64().toBigInt());
-else message.stickerIds.push(reader.fixed64().toBigInt());
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.stickerIds.length) {
-				writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork();
-				for (let i = 0; i < message.stickerIds.length; i++) writer.fixed64(message.stickerIds[i]);
-				writer.join();
-			}
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteStickers
-	*/
-	exports.FrecencyUserSettings_FavoriteStickers = new FrecencyUserSettings_FavoriteStickers$Type();
-	var FrecencyUserSettings_FrecencyItem$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.FrecencyItem", [
-				{
-					no: 1,
-					name: "total_uses",
-					kind: "scalar",
-					T: 13
-				},
-				{
-					no: 2,
-					name: "recent_uses",
-					kind: "scalar",
-					repeat: 1,
-					T: 4,
-					L: 0
-				},
-				{
-					no: 3,
-					name: "frecency",
-					kind: "scalar",
-					T: 5
-				},
-				{
-					no: 4,
-					name: "score",
-					kind: "scalar",
-					T: 5
-				}
-			]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.totalUses = 0;
-			message.recentUses = [];
-			message.frecency = 0;
-			message.score = 0;
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.totalUses = reader.uint32();
-						break;
-					case 2:
-						if (wireType === runtime_1$1.WireType.LengthDelimited) for (let e = reader.int32() + reader.pos; reader.pos < e;) message.recentUses.push(reader.uint64().toBigInt());
-else message.recentUses.push(reader.uint64().toBigInt());
-						break;
-					case 3:
-						message.frecency = reader.int32();
-						break;
-					case 4:
-						message.score = reader.int32();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.totalUses !== 0) writer.tag(1, runtime_1$1.WireType.Varint).uint32(message.totalUses);
-			if (message.recentUses.length) {
-				writer.tag(2, runtime_1$1.WireType.LengthDelimited).fork();
-				for (let i = 0; i < message.recentUses.length; i++) writer.uint64(message.recentUses[i]);
-				writer.join();
-			}
-			if (message.frecency !== 0) writer.tag(3, runtime_1$1.WireType.Varint).int32(message.frecency);
-			if (message.score !== 0) writer.tag(4, runtime_1$1.WireType.Varint).int32(message.score);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FrecencyItem
-	*/
-	exports.FrecencyUserSettings_FrecencyItem = new FrecencyUserSettings_FrecencyItem$Type();
-	var FrecencyUserSettings_StickerFrecency$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.StickerFrecency", [{
-				no: 1,
-				name: "stickers",
-				kind: "map",
-				K: 6,
-				V: {
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FrecencyItem
-				}
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.stickers = {};
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						this.binaryReadMap1(message.stickers, reader, options);
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		binaryReadMap1(map, reader, options) {
-			let len = reader.uint32(), end = reader.pos + len, key, val;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						key = reader.fixed64().toString();
-						break;
-					case 2:
-						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
-						break;
-					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.StickerFrecency.stickers");
-				}
-			}
-			map[key ?? "0"] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
-		}
-		internalBinaryWrite(message, writer, options) {
-			for (let k of globalThis.Object.keys(message.stickers)) {
-				writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork().tag(1, runtime_1$1.WireType.Bit64).fixed64(k);
-				writer.tag(2, runtime_1$1.WireType.LengthDelimited).fork();
-				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.stickers[k], writer, options);
-				writer.join().join();
-			}
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.StickerFrecency
-	*/
-	exports.FrecencyUserSettings_StickerFrecency = new FrecencyUserSettings_StickerFrecency$Type();
-	var FrecencyUserSettings_FavoriteEmojis$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteEmojis", [{
-				no: 1,
-				name: "emojis",
-				kind: "scalar",
-				repeat: 2,
-				T: 9
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.emojis = [];
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.emojis.push(reader.string());
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			for (let i = 0; i < message.emojis.length; i++) writer.tag(1, runtime_1$1.WireType.LengthDelimited).string(message.emojis[i]);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteEmojis
-	*/
-	exports.FrecencyUserSettings_FavoriteEmojis = new FrecencyUserSettings_FavoriteEmojis$Type();
-	var FrecencyUserSettings_EmojiFrecency$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.EmojiFrecency", [{
-				no: 1,
-				name: "emojis",
-				kind: "map",
-				K: 9,
-				V: {
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FrecencyItem
-				}
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.emojis = {};
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						this.binaryReadMap1(message.emojis, reader, options);
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		binaryReadMap1(map, reader, options) {
-			let len = reader.uint32(), end = reader.pos + len, key, val;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						key = reader.string();
-						break;
-					case 2:
-						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
-						break;
-					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.EmojiFrecency.emojis");
-				}
-			}
-			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
-		}
-		internalBinaryWrite(message, writer, options) {
-			for (let k of globalThis.Object.keys(message.emojis)) {
-				writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork().tag(1, runtime_1$1.WireType.LengthDelimited).string(k);
-				writer.tag(2, runtime_1$1.WireType.LengthDelimited).fork();
-				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.emojis[k], writer, options);
-				writer.join().join();
-			}
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.EmojiFrecency
-	*/
-	exports.FrecencyUserSettings_EmojiFrecency = new FrecencyUserSettings_EmojiFrecency$Type();
-	var FrecencyUserSettings_ApplicationCommandFrecency$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationCommandFrecency", [{
-				no: 1,
-				name: "application_commands",
-				kind: "map",
-				K: 9,
-				V: {
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FrecencyItem
-				}
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.applicationCommands = {};
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						this.binaryReadMap1(message.applicationCommands, reader, options);
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		binaryReadMap1(map, reader, options) {
-			let len = reader.uint32(), end = reader.pos + len, key, val;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						key = reader.string();
-						break;
-					case 2:
-						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
-						break;
-					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationCommandFrecency.application_commands");
-				}
-			}
-			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
-		}
-		internalBinaryWrite(message, writer, options) {
-			for (let k of globalThis.Object.keys(message.applicationCommands)) {
-				writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork().tag(1, runtime_1$1.WireType.LengthDelimited).string(k);
-				writer.tag(2, runtime_1$1.WireType.LengthDelimited).fork();
-				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.applicationCommands[k], writer, options);
-				writer.join().join();
-			}
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationCommandFrecency
-	*/
-	exports.FrecencyUserSettings_ApplicationCommandFrecency = new FrecencyUserSettings_ApplicationCommandFrecency$Type();
-	var FrecencyUserSettings_FavoriteSoundboardSounds$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteSoundboardSounds", [{
-				no: 1,
-				name: "sound_ids",
-				kind: "scalar",
-				repeat: 1,
-				T: 6,
-				L: 0
-			}, {
-				no: 2,
-				name: "ordered_sound_ids",
-				kind: "scalar",
-				repeat: 1,
-				T: 6,
-				L: 0
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.soundIds = [];
-			message.orderedSoundIds = [];
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						if (wireType === runtime_1$1.WireType.LengthDelimited) for (let e = reader.int32() + reader.pos; reader.pos < e;) message.soundIds.push(reader.fixed64().toBigInt());
-else message.soundIds.push(reader.fixed64().toBigInt());
-						break;
-					case 2:
-						if (wireType === runtime_1$1.WireType.LengthDelimited) for (let e = reader.int32() + reader.pos; reader.pos < e;) message.orderedSoundIds.push(reader.fixed64().toBigInt());
-else message.orderedSoundIds.push(reader.fixed64().toBigInt());
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.soundIds.length) {
-				writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork();
-				for (let i = 0; i < message.soundIds.length; i++) writer.fixed64(message.soundIds[i]);
-				writer.join();
-			}
-			if (message.orderedSoundIds.length) {
-				writer.tag(2, runtime_1$1.WireType.LengthDelimited).fork();
-				for (let i = 0; i < message.orderedSoundIds.length; i++) writer.fixed64(message.orderedSoundIds[i]);
-				writer.join();
-			}
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteSoundboardSounds
-	*/
-	exports.FrecencyUserSettings_FavoriteSoundboardSounds = new FrecencyUserSettings_FavoriteSoundboardSounds$Type();
-	var FrecencyUserSettings_ApplicationFrecency$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationFrecency", [{
-				no: 1,
-				name: "applications",
-				kind: "map",
-				K: 9,
-				V: {
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FrecencyItem
-				}
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.applications = {};
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						this.binaryReadMap1(message.applications, reader, options);
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		binaryReadMap1(map, reader, options) {
-			let len = reader.uint32(), end = reader.pos + len, key, val;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						key = reader.string();
-						break;
-					case 2:
-						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
-						break;
-					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationFrecency.applications");
-				}
-			}
-			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
-		}
-		internalBinaryWrite(message, writer, options) {
-			for (let k of globalThis.Object.keys(message.applications)) {
-				writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork().tag(1, runtime_1$1.WireType.LengthDelimited).string(k);
-				writer.tag(2, runtime_1$1.WireType.LengthDelimited).fork();
-				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.applications[k], writer, options);
-				writer.join().join();
-			}
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationFrecency
-	*/
-	exports.FrecencyUserSettings_ApplicationFrecency = new FrecencyUserSettings_ApplicationFrecency$Type();
-	var FrecencyUserSettings_HeardSoundFrecency$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.HeardSoundFrecency", [{
-				no: 1,
-				name: "heard_sounds",
-				kind: "map",
-				K: 9,
-				V: {
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FrecencyItem
-				}
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.heardSounds = {};
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						this.binaryReadMap1(message.heardSounds, reader, options);
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		binaryReadMap1(map, reader, options) {
-			let len = reader.uint32(), end = reader.pos + len, key, val;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						key = reader.string();
-						break;
-					case 2:
-						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
-						break;
-					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.HeardSoundFrecency.heard_sounds");
-				}
-			}
-			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
-		}
-		internalBinaryWrite(message, writer, options) {
-			for (let k of globalThis.Object.keys(message.heardSounds)) {
-				writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork().tag(1, runtime_1$1.WireType.LengthDelimited).string(k);
-				writer.tag(2, runtime_1$1.WireType.LengthDelimited).fork();
-				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.heardSounds[k], writer, options);
-				writer.join().join();
-			}
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.HeardSoundFrecency
-	*/
-	exports.FrecencyUserSettings_HeardSoundFrecency = new FrecencyUserSettings_HeardSoundFrecency$Type();
-	var FrecencyUserSettings_PlayedSoundFrecency$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.PlayedSoundFrecency", [{
-				no: 1,
-				name: "played_sounds",
-				kind: "map",
-				K: 9,
-				V: {
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FrecencyItem
-				}
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.playedSounds = {};
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						this.binaryReadMap1(message.playedSounds, reader, options);
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		binaryReadMap1(map, reader, options) {
-			let len = reader.uint32(), end = reader.pos + len, key, val;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						key = reader.string();
-						break;
-					case 2:
-						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
-						break;
-					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.PlayedSoundFrecency.played_sounds");
-				}
-			}
-			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
-		}
-		internalBinaryWrite(message, writer, options) {
-			for (let k of globalThis.Object.keys(message.playedSounds)) {
-				writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork().tag(1, runtime_1$1.WireType.LengthDelimited).string(k);
-				writer.tag(2, runtime_1$1.WireType.LengthDelimited).fork();
-				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.playedSounds[k], writer, options);
-				writer.join().join();
-			}
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.PlayedSoundFrecency
-	*/
-	exports.FrecencyUserSettings_PlayedSoundFrecency = new FrecencyUserSettings_PlayedSoundFrecency$Type();
-	var FrecencyUserSettings_GuildAndChannelFrecency$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.GuildAndChannelFrecency", [{
-				no: 1,
-				name: "guild_and_channels",
-				kind: "map",
-				K: 6,
-				V: {
-					kind: "message",
-					T: () => exports.FrecencyUserSettings_FrecencyItem
-				}
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.guildAndChannels = {};
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						this.binaryReadMap1(message.guildAndChannels, reader, options);
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		binaryReadMap1(map, reader, options) {
-			let len = reader.uint32(), end = reader.pos + len, key, val;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						key = reader.fixed64().toString();
-						break;
-					case 2:
-						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
-						break;
-					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.GuildAndChannelFrecency.guild_and_channels");
-				}
-			}
-			map[key ?? "0"] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
-		}
-		internalBinaryWrite(message, writer, options) {
-			for (let k of globalThis.Object.keys(message.guildAndChannels)) {
-				writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork().tag(1, runtime_1$1.WireType.Bit64).fixed64(k);
-				writer.tag(2, runtime_1$1.WireType.LengthDelimited).fork();
-				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.guildAndChannels[k], writer, options);
-				writer.join().join();
-			}
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.GuildAndChannelFrecency
-	*/
-	exports.FrecencyUserSettings_GuildAndChannelFrecency = new FrecencyUserSettings_GuildAndChannelFrecency$Type();
-	var FrecencyUserSettings_PinnedEmojiPacks$Type = class extends runtime_4.MessageType {
-		constructor() {
-			super("discord_protos.discord_users.v1.FrecencyUserSettings.PinnedEmojiPacks", [{
-				no: 1,
-				name: "pack_ids",
-				kind: "scalar",
-				repeat: 1,
-				T: 6,
-				L: 0
-			}]);
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.packIds = [];
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						if (wireType === runtime_1$1.WireType.LengthDelimited) for (let e = reader.int32() + reader.pos; reader.pos < e;) message.packIds.push(reader.fixed64().toBigInt());
-else message.packIds.push(reader.fixed64().toBigInt());
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.packIds.length) {
-				writer.tag(1, runtime_1$1.WireType.LengthDelimited).fork();
-				for (let i = 0; i < message.packIds.length; i++) writer.fixed64(message.packIds[i]);
-				writer.join();
-			}
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.PinnedEmojiPacks
-	*/
-	exports.FrecencyUserSettings_PinnedEmojiPacks = new FrecencyUserSettings_PinnedEmojiPacks$Type();
+			return [];
+		};
+		/**
+		* Returns the last unknown field by field number.
+		*/
+		UnknownFieldHandler$1.last = (message, fieldNo) => UnknownFieldHandler$1.list(message, fieldNo).slice(-1)[0];
+		const is = (message) => message && Array.isArray(message[UnknownFieldHandler$1.symbol]);
+	})(UnknownFieldHandler || (UnknownFieldHandler = {}));
+	(function(WireType$1) {
+		/**
+		* Used for int32, int64, uint32, uint64, sint32, sint64, bool, enum
+		*/
+		WireType$1[WireType$1["Varint"] = 0] = "Varint";
+		/**
+		* Used for fixed64, sfixed64, double.
+		* Always 8 bytes with little-endian byte order.
+		*/
+		WireType$1[WireType$1["Bit64"] = 1] = "Bit64";
+		/**
+		* Used for string, bytes, embedded messages, packed repeated fields
+		*
+		* Only repeated numeric types (types which use the varint, 32-bit,
+		* or 64-bit wire types) can be packed. In proto3, such fields are
+		* packed by default.
+		*/
+		WireType$1[WireType$1["LengthDelimited"] = 2] = "LengthDelimited";
+		/**
+		* Used for groups
+		* @deprecated
+		*/
+		WireType$1[WireType$1["StartGroup"] = 3] = "StartGroup";
+		/**
+		* Used for groups
+		* @deprecated
+		*/
+		WireType$1[WireType$1["EndGroup"] = 4] = "EndGroup";
+		/**
+		* Used for fixed32, sfixed32, float.
+		* Always 4 bytes with little-endian byte order.
+		*/
+		WireType$1[WireType$1["Bit32"] = 5] = "Bit32";
+	})(WireType || (WireType = {}));
 } });
 
 //#endregion
@@ -33293,187 +31454,1212 @@ var init_binary_writer = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015
 } });
 
 //#endregion
-//#region node_modules/@protobuf-ts/runtime/build/es2015/pb-long.js
-function detectBi() {
-	const dv = new DataView(new ArrayBuffer(8));
-	const ok = globalThis.BigInt !== undefined && typeof dv.getBigInt64 === "function" && typeof dv.getBigUint64 === "function" && typeof dv.setBigInt64 === "function" && typeof dv.setBigUint64 === "function";
-	BI = ok ? {
-		MIN: BigInt("-9223372036854775808"),
-		MAX: BigInt("9223372036854775807"),
-		UMIN: BigInt("0"),
-		UMAX: BigInt("18446744073709551615"),
-		C: BigInt,
-		V: dv
-	} : undefined;
-}
-function assertBi(bi) {
-	if (!bi) throw new Error("BigInt unavailable, see https://github.com/timostamm/protobuf-ts/blob/v1.0.8/MANUAL.md#bigint-support");
-}
-var BI, RE_DECIMAL_STR, TWO_PWR_32_DBL$1, HALF_2_PWR_32, SharedPbLong, PbULong, PbLong;
-var init_pb_long = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015/pb-long.js"() {
-	init_goog_varint();
-	detectBi();
-	RE_DECIMAL_STR = /^-?[0-9]+$/;
-	TWO_PWR_32_DBL$1 = 4294967296;
-	HALF_2_PWR_32 = 2147483648;
-	SharedPbLong = class {
+//#region node_modules/discord-protos/dist/discord_protos/discord_users/v1/FrecencyUserSettings.js
+var require_FrecencyUserSettings = __commonJS({ "node_modules/discord-protos/dist/discord_protos/discord_users/v1/FrecencyUserSettings.js"(exports) {
+	Object.defineProperty(exports, "__esModule", { value: true });
+	exports.FrecencyUserSettings_PinnedEmojiPacks = exports.FrecencyUserSettings_GuildAndChannelFrecency = exports.FrecencyUserSettings_PlayedSoundFrecency = exports.FrecencyUserSettings_HeardSoundFrecency = exports.FrecencyUserSettings_ApplicationFrecency = exports.FrecencyUserSettings_FavoriteSoundboardSounds = exports.FrecencyUserSettings_ApplicationCommandFrecency = exports.FrecencyUserSettings_EmojiFrecency = exports.FrecencyUserSettings_FavoriteEmojis = exports.FrecencyUserSettings_StickerFrecency = exports.FrecencyUserSettings_FrecencyItem = exports.FrecencyUserSettings_FavoriteStickers = exports.FrecencyUserSettings_FavoriteGIFs = exports.FrecencyUserSettings_FavoriteGIF = exports.FrecencyUserSettings_Versions = exports.FrecencyUserSettings = exports.FrecencyUserSettings_GIFType = void 0;
+	const runtime_1$4 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_2$3 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_3$3 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_4$3 = (init_es2015(), __toCommonJS(es2015_exports));
+	/**
+	* @generated from protobuf enum discord_protos.discord_users.v1.FrecencyUserSettings.GIFType
+	*/
+	var FrecencyUserSettings_GIFType;
+	(function(FrecencyUserSettings_GIFType$1) {
 		/**
-		* Create a new instance with the given bits.
+		* @generated from protobuf enum value: GIF_TYPE_NONE = 0;
 		*/
-		constructor(lo, hi) {
-			this.lo = lo | 0;
-			this.hi = hi | 0;
+		FrecencyUserSettings_GIFType$1[FrecencyUserSettings_GIFType$1["GIF_TYPE_NONE"] = 0] = "GIF_TYPE_NONE";
+		/**
+		* @generated from protobuf enum value: GIF_TYPE_IMAGE = 1;
+		*/
+		FrecencyUserSettings_GIFType$1[FrecencyUserSettings_GIFType$1["GIF_TYPE_IMAGE"] = 1] = "GIF_TYPE_IMAGE";
+		/**
+		* @generated from protobuf enum value: GIF_TYPE_VIDEO = 2;
+		*/
+		FrecencyUserSettings_GIFType$1[FrecencyUserSettings_GIFType$1["GIF_TYPE_VIDEO"] = 2] = "GIF_TYPE_VIDEO";
+	})(FrecencyUserSettings_GIFType || (exports.FrecencyUserSettings_GIFType = FrecencyUserSettings_GIFType = {}));
+	var FrecencyUserSettings$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings", [
+				{
+					no: 1,
+					name: "versions",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_Versions
+				},
+				{
+					no: 2,
+					name: "favorite_gifs",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FavoriteGIFs
+				},
+				{
+					no: 3,
+					name: "favorite_stickers",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FavoriteStickers
+				},
+				{
+					no: 4,
+					name: "sticker_frecency",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_StickerFrecency
+				},
+				{
+					no: 5,
+					name: "favorite_emojis",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FavoriteEmojis
+				},
+				{
+					no: 6,
+					name: "emoji_frecency",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_EmojiFrecency
+				},
+				{
+					no: 7,
+					name: "application_command_frecency",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_ApplicationCommandFrecency
+				},
+				{
+					no: 8,
+					name: "favorite_soundboard_sounds",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FavoriteSoundboardSounds
+				},
+				{
+					no: 9,
+					name: "application_frecency",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_ApplicationFrecency
+				},
+				{
+					no: 10,
+					name: "heard_sound_frecency",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_HeardSoundFrecency
+				},
+				{
+					no: 11,
+					name: "played_sound_frecency",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_PlayedSoundFrecency
+				},
+				{
+					no: 12,
+					name: "guild_and_channel_frecency",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_GuildAndChannelFrecency
+				},
+				{
+					no: 13,
+					name: "emoji_reaction_frecency",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_EmojiFrecency
+				},
+				{
+					no: 14,
+					name: "pinned_emoji_packs",
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_PinnedEmojiPacks
+				}
+			]);
 		}
-		/**
-		* Is this instance equal to 0?
-		*/
-		isZero() {
-			return this.lo == 0 && this.hi == 0;
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
 		}
-		/**
-		* Convert to a native number.
-		*/
-		toNumber() {
-			let result = this.hi * TWO_PWR_32_DBL$1 + (this.lo >>> 0);
-			if (!Number.isSafeInteger(result)) throw new Error("cannot convert to safe number");
-			return result;
-		}
-	};
-	PbULong = class PbULong extends SharedPbLong {
-		/**
-		* Create instance from a `string`, `number` or `bigint`.
-		*/
-		static from(value) {
-			if (BI) switch (typeof value) {
-				case "string":
-					if (value == "0") return this.ZERO;
-					if (value == "") throw new Error("string is no integer");
-					value = BI.C(value);
-				case "number":
-					if (value === 0) return this.ZERO;
-					value = BI.C(value);
-				case "bigint":
-					if (!value) return this.ZERO;
-					if (value < BI.UMIN) throw new Error("signed value for ulong");
-					if (value > BI.UMAX) throw new Error("ulong too large");
-					BI.V.setBigUint64(0, value, true);
-					return new PbULong(BI.V.getInt32(0, true), BI.V.getInt32(4, true));
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.versions = exports.FrecencyUserSettings_Versions.internalBinaryRead(reader, reader.uint32(), options, message.versions);
+						break;
+					case 2:
+						message.favoriteGifs = exports.FrecencyUserSettings_FavoriteGIFs.internalBinaryRead(reader, reader.uint32(), options, message.favoriteGifs);
+						break;
+					case 3:
+						message.favoriteStickers = exports.FrecencyUserSettings_FavoriteStickers.internalBinaryRead(reader, reader.uint32(), options, message.favoriteStickers);
+						break;
+					case 4:
+						message.stickerFrecency = exports.FrecencyUserSettings_StickerFrecency.internalBinaryRead(reader, reader.uint32(), options, message.stickerFrecency);
+						break;
+					case 5:
+						message.favoriteEmojis = exports.FrecencyUserSettings_FavoriteEmojis.internalBinaryRead(reader, reader.uint32(), options, message.favoriteEmojis);
+						break;
+					case 6:
+						message.emojiFrecency = exports.FrecencyUserSettings_EmojiFrecency.internalBinaryRead(reader, reader.uint32(), options, message.emojiFrecency);
+						break;
+					case 7:
+						message.applicationCommandFrecency = exports.FrecencyUserSettings_ApplicationCommandFrecency.internalBinaryRead(reader, reader.uint32(), options, message.applicationCommandFrecency);
+						break;
+					case 8:
+						message.favoriteSoundboardSounds = exports.FrecencyUserSettings_FavoriteSoundboardSounds.internalBinaryRead(reader, reader.uint32(), options, message.favoriteSoundboardSounds);
+						break;
+					case 9:
+						message.applicationFrecency = exports.FrecencyUserSettings_ApplicationFrecency.internalBinaryRead(reader, reader.uint32(), options, message.applicationFrecency);
+						break;
+					case 10:
+						message.heardSoundFrecency = exports.FrecencyUserSettings_HeardSoundFrecency.internalBinaryRead(reader, reader.uint32(), options, message.heardSoundFrecency);
+						break;
+					case 11:
+						message.playedSoundFrecency = exports.FrecencyUserSettings_PlayedSoundFrecency.internalBinaryRead(reader, reader.uint32(), options, message.playedSoundFrecency);
+						break;
+					case 12:
+						message.guildAndChannelFrecency = exports.FrecencyUserSettings_GuildAndChannelFrecency.internalBinaryRead(reader, reader.uint32(), options, message.guildAndChannelFrecency);
+						break;
+					case 13:
+						message.emojiReactionFrecency = exports.FrecencyUserSettings_EmojiFrecency.internalBinaryRead(reader, reader.uint32(), options, message.emojiReactionFrecency);
+						break;
+					case 14:
+						message.pinnedEmojiPacks = exports.FrecencyUserSettings_PinnedEmojiPacks.internalBinaryRead(reader, reader.uint32(), options, message.pinnedEmojiPacks);
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
 			}
-else switch (typeof value) {
-				case "string":
-					if (value == "0") return this.ZERO;
-					value = value.trim();
-					if (!RE_DECIMAL_STR.test(value)) throw new Error("string is no integer");
-					let [minus, lo, hi] = int64fromString(value);
-					if (minus) throw new Error("signed value for ulong");
-					return new PbULong(lo, hi);
-				case "number":
-					if (value == 0) return this.ZERO;
-					if (!Number.isSafeInteger(value)) throw new Error("number is no integer");
-					if (value < 0) throw new Error("signed value for ulong");
-					return new PbULong(value, value / TWO_PWR_32_DBL$1);
-			}
-			throw new Error("unknown value " + typeof value);
+			return message;
 		}
-		/**
-		* Convert to decimal string.
-		*/
-		toString() {
-			return BI ? this.toBigInt().toString() : int64toString(this.lo, this.hi);
-		}
-		/**
-		* Convert to native bigint.
-		*/
-		toBigInt() {
-			assertBi(BI);
-			BI.V.setInt32(0, this.lo, true);
-			BI.V.setInt32(4, this.hi, true);
-			return BI.V.getBigUint64(0, true);
+		internalBinaryWrite(message, writer, options) {
+			if (message.versions) exports.FrecencyUserSettings_Versions.internalBinaryWrite(message.versions, writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.favoriteGifs) exports.FrecencyUserSettings_FavoriteGIFs.internalBinaryWrite(message.favoriteGifs, writer.tag(2, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.favoriteStickers) exports.FrecencyUserSettings_FavoriteStickers.internalBinaryWrite(message.favoriteStickers, writer.tag(3, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.stickerFrecency) exports.FrecencyUserSettings_StickerFrecency.internalBinaryWrite(message.stickerFrecency, writer.tag(4, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.favoriteEmojis) exports.FrecencyUserSettings_FavoriteEmojis.internalBinaryWrite(message.favoriteEmojis, writer.tag(5, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.emojiFrecency) exports.FrecencyUserSettings_EmojiFrecency.internalBinaryWrite(message.emojiFrecency, writer.tag(6, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.applicationCommandFrecency) exports.FrecencyUserSettings_ApplicationCommandFrecency.internalBinaryWrite(message.applicationCommandFrecency, writer.tag(7, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.favoriteSoundboardSounds) exports.FrecencyUserSettings_FavoriteSoundboardSounds.internalBinaryWrite(message.favoriteSoundboardSounds, writer.tag(8, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.applicationFrecency) exports.FrecencyUserSettings_ApplicationFrecency.internalBinaryWrite(message.applicationFrecency, writer.tag(9, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.heardSoundFrecency) exports.FrecencyUserSettings_HeardSoundFrecency.internalBinaryWrite(message.heardSoundFrecency, writer.tag(10, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.playedSoundFrecency) exports.FrecencyUserSettings_PlayedSoundFrecency.internalBinaryWrite(message.playedSoundFrecency, writer.tag(11, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.guildAndChannelFrecency) exports.FrecencyUserSettings_GuildAndChannelFrecency.internalBinaryWrite(message.guildAndChannelFrecency, writer.tag(12, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.emojiReactionFrecency) exports.FrecencyUserSettings_EmojiFrecency.internalBinaryWrite(message.emojiReactionFrecency, writer.tag(13, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			if (message.pinnedEmojiPacks) exports.FrecencyUserSettings_PinnedEmojiPacks.internalBinaryWrite(message.pinnedEmojiPacks, writer.tag(14, runtime_1$4.WireType.LengthDelimited).fork(), options).join();
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
 		}
 	};
 	/**
-	* ulong 0 singleton.
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings
 	*/
-	PbULong.ZERO = new PbULong(0, 0);
-	PbLong = class PbLong extends SharedPbLong {
-		/**
-		* Create instance from a `string`, `number` or `bigint`.
-		*/
-		static from(value) {
-			if (BI) switch (typeof value) {
-				case "string":
-					if (value == "0") return this.ZERO;
-					if (value == "") throw new Error("string is no integer");
-					value = BI.C(value);
-				case "number":
-					if (value === 0) return this.ZERO;
-					value = BI.C(value);
-				case "bigint":
-					if (!value) return this.ZERO;
-					if (value < BI.MIN) throw new Error("signed long too small");
-					if (value > BI.MAX) throw new Error("signed long too large");
-					BI.V.setBigInt64(0, value, true);
-					return new PbLong(BI.V.getInt32(0, true), BI.V.getInt32(4, true));
+	exports.FrecencyUserSettings = new FrecencyUserSettings$Type();
+	var FrecencyUserSettings_Versions$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.Versions", [
+				{
+					no: 1,
+					name: "client_version",
+					kind: "scalar",
+					T: 13
+				},
+				{
+					no: 2,
+					name: "server_version",
+					kind: "scalar",
+					T: 13
+				},
+				{
+					no: 3,
+					name: "data_version",
+					kind: "scalar",
+					T: 13
+				}
+			]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.clientVersion = 0;
+			message.serverVersion = 0;
+			message.dataVersion = 0;
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.clientVersion = reader.uint32();
+						break;
+					case 2:
+						message.serverVersion = reader.uint32();
+						break;
+					case 3:
+						message.dataVersion = reader.uint32();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
 			}
-else switch (typeof value) {
-				case "string":
-					if (value == "0") return this.ZERO;
-					value = value.trim();
-					if (!RE_DECIMAL_STR.test(value)) throw new Error("string is no integer");
-					let [minus, lo, hi] = int64fromString(value);
-					if (minus) {
-						if (hi > HALF_2_PWR_32 || hi == HALF_2_PWR_32 && lo != 0) throw new Error("signed long too small");
-					} else if (hi >= HALF_2_PWR_32) throw new Error("signed long too large");
-					let pbl = new PbLong(lo, hi);
-					return minus ? pbl.negate() : pbl;
-				case "number":
-					if (value == 0) return this.ZERO;
-					if (!Number.isSafeInteger(value)) throw new Error("number is no integer");
-					return value > 0 ? new PbLong(value, value / TWO_PWR_32_DBL$1) : new PbLong(-value, -value / TWO_PWR_32_DBL$1).negate();
-			}
-			throw new Error("unknown value " + typeof value);
+			return message;
 		}
-		/**
-		* Do we have a minus sign?
-		*/
-		isNegative() {
-			return (this.hi & HALF_2_PWR_32) !== 0;
-		}
-		/**
-		* Negate two's complement.
-		* Invert all the bits and add one to the result.
-		*/
-		negate() {
-			let hi = ~this.hi, lo = this.lo;
-			if (lo) lo = ~lo + 1;
-else hi += 1;
-			return new PbLong(lo, hi);
-		}
-		/**
-		* Convert to decimal string.
-		*/
-		toString() {
-			if (BI) return this.toBigInt().toString();
-			if (this.isNegative()) {
-				let n = this.negate();
-				return "-" + int64toString(n.lo, n.hi);
-			}
-			return int64toString(this.lo, this.hi);
-		}
-		/**
-		* Convert to native bigint.
-		*/
-		toBigInt() {
-			assertBi(BI);
-			BI.V.setInt32(0, this.lo, true);
-			BI.V.setInt32(4, this.hi, true);
-			return BI.V.getBigInt64(0, true);
+		internalBinaryWrite(message, writer, options) {
+			if (message.clientVersion !== 0) writer.tag(1, runtime_1$4.WireType.Varint).uint32(message.clientVersion);
+			if (message.serverVersion !== 0) writer.tag(2, runtime_1$4.WireType.Varint).uint32(message.serverVersion);
+			if (message.dataVersion !== 0) writer.tag(3, runtime_1$4.WireType.Varint).uint32(message.dataVersion);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
 		}
 	};
 	/**
-	* long 0 singleton.
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.Versions
 	*/
-	PbLong.ZERO = new PbLong(0, 0);
+	exports.FrecencyUserSettings_Versions = new FrecencyUserSettings_Versions$Type();
+	var FrecencyUserSettings_FavoriteGIF$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteGIF", [
+				{
+					no: 1,
+					name: "format",
+					kind: "enum",
+					T: () => ["discord_protos.discord_users.v1.FrecencyUserSettings.GIFType", FrecencyUserSettings_GIFType]
+				},
+				{
+					no: 2,
+					name: "src",
+					kind: "scalar",
+					T: 9
+				},
+				{
+					no: 3,
+					name: "width",
+					kind: "scalar",
+					T: 13
+				},
+				{
+					no: 4,
+					name: "height",
+					kind: "scalar",
+					T: 13
+				},
+				{
+					no: 5,
+					name: "order",
+					kind: "scalar",
+					T: 13
+				}
+			]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.format = 0;
+			message.src = "";
+			message.width = 0;
+			message.height = 0;
+			message.order = 0;
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.format = reader.int32();
+						break;
+					case 2:
+						message.src = reader.string();
+						break;
+					case 3:
+						message.width = reader.uint32();
+						break;
+					case 4:
+						message.height = reader.uint32();
+						break;
+					case 5:
+						message.order = reader.uint32();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.format !== 0) writer.tag(1, runtime_1$4.WireType.Varint).int32(message.format);
+			if (message.src !== "") writer.tag(2, runtime_1$4.WireType.LengthDelimited).string(message.src);
+			if (message.width !== 0) writer.tag(3, runtime_1$4.WireType.Varint).uint32(message.width);
+			if (message.height !== 0) writer.tag(4, runtime_1$4.WireType.Varint).uint32(message.height);
+			if (message.order !== 0) writer.tag(5, runtime_1$4.WireType.Varint).uint32(message.order);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteGIF
+	*/
+	exports.FrecencyUserSettings_FavoriteGIF = new FrecencyUserSettings_FavoriteGIF$Type();
+	var FrecencyUserSettings_FavoriteGIFs$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteGIFs", [{
+				no: 1,
+				name: "gifs",
+				kind: "map",
+				K: 9,
+				V: {
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FavoriteGIF
+				}
+			}, {
+				no: 2,
+				name: "hide_tooltip",
+				kind: "scalar",
+				T: 8
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.gifs = {};
+			message.hideTooltip = false;
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						this.binaryReadMap1(message.gifs, reader, options);
+						break;
+					case 2:
+						message.hideTooltip = reader.bool();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		binaryReadMap1(map, reader, options) {
+			let len = reader.uint32(), end = reader.pos + len, key, val;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						key = reader.string();
+						break;
+					case 2:
+						val = exports.FrecencyUserSettings_FavoriteGIF.internalBinaryRead(reader, reader.uint32(), options);
+						break;
+					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteGIFs.gifs");
+				}
+			}
+			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FavoriteGIF.create();
+		}
+		internalBinaryWrite(message, writer, options) {
+			for (let k of globalThis.Object.keys(message.gifs)) {
+				writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork().tag(1, runtime_1$4.WireType.LengthDelimited).string(k);
+				writer.tag(2, runtime_1$4.WireType.LengthDelimited).fork();
+				exports.FrecencyUserSettings_FavoriteGIF.internalBinaryWrite(message.gifs[k], writer, options);
+				writer.join().join();
+			}
+			if (message.hideTooltip !== false) writer.tag(2, runtime_1$4.WireType.Varint).bool(message.hideTooltip);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteGIFs
+	*/
+	exports.FrecencyUserSettings_FavoriteGIFs = new FrecencyUserSettings_FavoriteGIFs$Type();
+	var FrecencyUserSettings_FavoriteStickers$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteStickers", [{
+				no: 1,
+				name: "sticker_ids",
+				kind: "scalar",
+				repeat: 1,
+				T: 6,
+				L: 0
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.stickerIds = [];
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						if (wireType === runtime_1$4.WireType.LengthDelimited) for (let e = reader.int32() + reader.pos; reader.pos < e;) message.stickerIds.push(reader.fixed64().toBigInt());
+else message.stickerIds.push(reader.fixed64().toBigInt());
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.stickerIds.length) {
+				writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork();
+				for (let i = 0; i < message.stickerIds.length; i++) writer.fixed64(message.stickerIds[i]);
+				writer.join();
+			}
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteStickers
+	*/
+	exports.FrecencyUserSettings_FavoriteStickers = new FrecencyUserSettings_FavoriteStickers$Type();
+	var FrecencyUserSettings_FrecencyItem$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.FrecencyItem", [
+				{
+					no: 1,
+					name: "total_uses",
+					kind: "scalar",
+					T: 13
+				},
+				{
+					no: 2,
+					name: "recent_uses",
+					kind: "scalar",
+					repeat: 1,
+					T: 4,
+					L: 0
+				},
+				{
+					no: 3,
+					name: "frecency",
+					kind: "scalar",
+					T: 5
+				},
+				{
+					no: 4,
+					name: "score",
+					kind: "scalar",
+					T: 5
+				}
+			]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.totalUses = 0;
+			message.recentUses = [];
+			message.frecency = 0;
+			message.score = 0;
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.totalUses = reader.uint32();
+						break;
+					case 2:
+						if (wireType === runtime_1$4.WireType.LengthDelimited) for (let e = reader.int32() + reader.pos; reader.pos < e;) message.recentUses.push(reader.uint64().toBigInt());
+else message.recentUses.push(reader.uint64().toBigInt());
+						break;
+					case 3:
+						message.frecency = reader.int32();
+						break;
+					case 4:
+						message.score = reader.int32();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.totalUses !== 0) writer.tag(1, runtime_1$4.WireType.Varint).uint32(message.totalUses);
+			if (message.recentUses.length) {
+				writer.tag(2, runtime_1$4.WireType.LengthDelimited).fork();
+				for (let i = 0; i < message.recentUses.length; i++) writer.uint64(message.recentUses[i]);
+				writer.join();
+			}
+			if (message.frecency !== 0) writer.tag(3, runtime_1$4.WireType.Varint).int32(message.frecency);
+			if (message.score !== 0) writer.tag(4, runtime_1$4.WireType.Varint).int32(message.score);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FrecencyItem
+	*/
+	exports.FrecencyUserSettings_FrecencyItem = new FrecencyUserSettings_FrecencyItem$Type();
+	var FrecencyUserSettings_StickerFrecency$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.StickerFrecency", [{
+				no: 1,
+				name: "stickers",
+				kind: "map",
+				K: 6,
+				V: {
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FrecencyItem
+				}
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.stickers = {};
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						this.binaryReadMap1(message.stickers, reader, options);
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		binaryReadMap1(map, reader, options) {
+			let len = reader.uint32(), end = reader.pos + len, key, val;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						key = reader.fixed64().toString();
+						break;
+					case 2:
+						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
+						break;
+					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.StickerFrecency.stickers");
+				}
+			}
+			map[key ?? "0"] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
+		}
+		internalBinaryWrite(message, writer, options) {
+			for (let k of globalThis.Object.keys(message.stickers)) {
+				writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork().tag(1, runtime_1$4.WireType.Bit64).fixed64(k);
+				writer.tag(2, runtime_1$4.WireType.LengthDelimited).fork();
+				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.stickers[k], writer, options);
+				writer.join().join();
+			}
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.StickerFrecency
+	*/
+	exports.FrecencyUserSettings_StickerFrecency = new FrecencyUserSettings_StickerFrecency$Type();
+	var FrecencyUserSettings_FavoriteEmojis$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteEmojis", [{
+				no: 1,
+				name: "emojis",
+				kind: "scalar",
+				repeat: 2,
+				T: 9
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.emojis = [];
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.emojis.push(reader.string());
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			for (let i = 0; i < message.emojis.length; i++) writer.tag(1, runtime_1$4.WireType.LengthDelimited).string(message.emojis[i]);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteEmojis
+	*/
+	exports.FrecencyUserSettings_FavoriteEmojis = new FrecencyUserSettings_FavoriteEmojis$Type();
+	var FrecencyUserSettings_EmojiFrecency$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.EmojiFrecency", [{
+				no: 1,
+				name: "emojis",
+				kind: "map",
+				K: 9,
+				V: {
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FrecencyItem
+				}
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.emojis = {};
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						this.binaryReadMap1(message.emojis, reader, options);
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		binaryReadMap1(map, reader, options) {
+			let len = reader.uint32(), end = reader.pos + len, key, val;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						key = reader.string();
+						break;
+					case 2:
+						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
+						break;
+					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.EmojiFrecency.emojis");
+				}
+			}
+			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
+		}
+		internalBinaryWrite(message, writer, options) {
+			for (let k of globalThis.Object.keys(message.emojis)) {
+				writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork().tag(1, runtime_1$4.WireType.LengthDelimited).string(k);
+				writer.tag(2, runtime_1$4.WireType.LengthDelimited).fork();
+				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.emojis[k], writer, options);
+				writer.join().join();
+			}
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.EmojiFrecency
+	*/
+	exports.FrecencyUserSettings_EmojiFrecency = new FrecencyUserSettings_EmojiFrecency$Type();
+	var FrecencyUserSettings_ApplicationCommandFrecency$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationCommandFrecency", [{
+				no: 1,
+				name: "application_commands",
+				kind: "map",
+				K: 9,
+				V: {
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FrecencyItem
+				}
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.applicationCommands = {};
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						this.binaryReadMap1(message.applicationCommands, reader, options);
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		binaryReadMap1(map, reader, options) {
+			let len = reader.uint32(), end = reader.pos + len, key, val;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						key = reader.string();
+						break;
+					case 2:
+						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
+						break;
+					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationCommandFrecency.application_commands");
+				}
+			}
+			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
+		}
+		internalBinaryWrite(message, writer, options) {
+			for (let k of globalThis.Object.keys(message.applicationCommands)) {
+				writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork().tag(1, runtime_1$4.WireType.LengthDelimited).string(k);
+				writer.tag(2, runtime_1$4.WireType.LengthDelimited).fork();
+				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.applicationCommands[k], writer, options);
+				writer.join().join();
+			}
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationCommandFrecency
+	*/
+	exports.FrecencyUserSettings_ApplicationCommandFrecency = new FrecencyUserSettings_ApplicationCommandFrecency$Type();
+	var FrecencyUserSettings_FavoriteSoundboardSounds$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteSoundboardSounds", [{
+				no: 1,
+				name: "sound_ids",
+				kind: "scalar",
+				repeat: 1,
+				T: 6,
+				L: 0
+			}, {
+				no: 2,
+				name: "ordered_sound_ids",
+				kind: "scalar",
+				repeat: 1,
+				T: 6,
+				L: 0
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.soundIds = [];
+			message.orderedSoundIds = [];
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						if (wireType === runtime_1$4.WireType.LengthDelimited) for (let e = reader.int32() + reader.pos; reader.pos < e;) message.soundIds.push(reader.fixed64().toBigInt());
+else message.soundIds.push(reader.fixed64().toBigInt());
+						break;
+					case 2:
+						if (wireType === runtime_1$4.WireType.LengthDelimited) for (let e = reader.int32() + reader.pos; reader.pos < e;) message.orderedSoundIds.push(reader.fixed64().toBigInt());
+else message.orderedSoundIds.push(reader.fixed64().toBigInt());
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.soundIds.length) {
+				writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork();
+				for (let i = 0; i < message.soundIds.length; i++) writer.fixed64(message.soundIds[i]);
+				writer.join();
+			}
+			if (message.orderedSoundIds.length) {
+				writer.tag(2, runtime_1$4.WireType.LengthDelimited).fork();
+				for (let i = 0; i < message.orderedSoundIds.length; i++) writer.fixed64(message.orderedSoundIds[i]);
+				writer.join();
+			}
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.FavoriteSoundboardSounds
+	*/
+	exports.FrecencyUserSettings_FavoriteSoundboardSounds = new FrecencyUserSettings_FavoriteSoundboardSounds$Type();
+	var FrecencyUserSettings_ApplicationFrecency$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationFrecency", [{
+				no: 1,
+				name: "applications",
+				kind: "map",
+				K: 9,
+				V: {
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FrecencyItem
+				}
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.applications = {};
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						this.binaryReadMap1(message.applications, reader, options);
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		binaryReadMap1(map, reader, options) {
+			let len = reader.uint32(), end = reader.pos + len, key, val;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						key = reader.string();
+						break;
+					case 2:
+						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
+						break;
+					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationFrecency.applications");
+				}
+			}
+			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
+		}
+		internalBinaryWrite(message, writer, options) {
+			for (let k of globalThis.Object.keys(message.applications)) {
+				writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork().tag(1, runtime_1$4.WireType.LengthDelimited).string(k);
+				writer.tag(2, runtime_1$4.WireType.LengthDelimited).fork();
+				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.applications[k], writer, options);
+				writer.join().join();
+			}
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.ApplicationFrecency
+	*/
+	exports.FrecencyUserSettings_ApplicationFrecency = new FrecencyUserSettings_ApplicationFrecency$Type();
+	var FrecencyUserSettings_HeardSoundFrecency$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.HeardSoundFrecency", [{
+				no: 1,
+				name: "heard_sounds",
+				kind: "map",
+				K: 9,
+				V: {
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FrecencyItem
+				}
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.heardSounds = {};
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						this.binaryReadMap1(message.heardSounds, reader, options);
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		binaryReadMap1(map, reader, options) {
+			let len = reader.uint32(), end = reader.pos + len, key, val;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						key = reader.string();
+						break;
+					case 2:
+						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
+						break;
+					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.HeardSoundFrecency.heard_sounds");
+				}
+			}
+			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
+		}
+		internalBinaryWrite(message, writer, options) {
+			for (let k of globalThis.Object.keys(message.heardSounds)) {
+				writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork().tag(1, runtime_1$4.WireType.LengthDelimited).string(k);
+				writer.tag(2, runtime_1$4.WireType.LengthDelimited).fork();
+				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.heardSounds[k], writer, options);
+				writer.join().join();
+			}
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.HeardSoundFrecency
+	*/
+	exports.FrecencyUserSettings_HeardSoundFrecency = new FrecencyUserSettings_HeardSoundFrecency$Type();
+	var FrecencyUserSettings_PlayedSoundFrecency$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.PlayedSoundFrecency", [{
+				no: 1,
+				name: "played_sounds",
+				kind: "map",
+				K: 9,
+				V: {
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FrecencyItem
+				}
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.playedSounds = {};
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						this.binaryReadMap1(message.playedSounds, reader, options);
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		binaryReadMap1(map, reader, options) {
+			let len = reader.uint32(), end = reader.pos + len, key, val;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						key = reader.string();
+						break;
+					case 2:
+						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
+						break;
+					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.PlayedSoundFrecency.played_sounds");
+				}
+			}
+			map[key ?? ""] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
+		}
+		internalBinaryWrite(message, writer, options) {
+			for (let k of globalThis.Object.keys(message.playedSounds)) {
+				writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork().tag(1, runtime_1$4.WireType.LengthDelimited).string(k);
+				writer.tag(2, runtime_1$4.WireType.LengthDelimited).fork();
+				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.playedSounds[k], writer, options);
+				writer.join().join();
+			}
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.PlayedSoundFrecency
+	*/
+	exports.FrecencyUserSettings_PlayedSoundFrecency = new FrecencyUserSettings_PlayedSoundFrecency$Type();
+	var FrecencyUserSettings_GuildAndChannelFrecency$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.GuildAndChannelFrecency", [{
+				no: 1,
+				name: "guild_and_channels",
+				kind: "map",
+				K: 6,
+				V: {
+					kind: "message",
+					T: () => exports.FrecencyUserSettings_FrecencyItem
+				}
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.guildAndChannels = {};
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						this.binaryReadMap1(message.guildAndChannels, reader, options);
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		binaryReadMap1(map, reader, options) {
+			let len = reader.uint32(), end = reader.pos + len, key, val;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						key = reader.fixed64().toString();
+						break;
+					case 2:
+						val = exports.FrecencyUserSettings_FrecencyItem.internalBinaryRead(reader, reader.uint32(), options);
+						break;
+					default: throw new globalThis.Error("unknown map entry field for discord_protos.discord_users.v1.FrecencyUserSettings.GuildAndChannelFrecency.guild_and_channels");
+				}
+			}
+			map[key ?? "0"] = val ?? exports.FrecencyUserSettings_FrecencyItem.create();
+		}
+		internalBinaryWrite(message, writer, options) {
+			for (let k of globalThis.Object.keys(message.guildAndChannels)) {
+				writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork().tag(1, runtime_1$4.WireType.Bit64).fixed64(k);
+				writer.tag(2, runtime_1$4.WireType.LengthDelimited).fork();
+				exports.FrecencyUserSettings_FrecencyItem.internalBinaryWrite(message.guildAndChannels[k], writer, options);
+				writer.join().join();
+			}
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.GuildAndChannelFrecency
+	*/
+	exports.FrecencyUserSettings_GuildAndChannelFrecency = new FrecencyUserSettings_GuildAndChannelFrecency$Type();
+	var FrecencyUserSettings_PinnedEmojiPacks$Type = class extends runtime_4$3.MessageType {
+		constructor() {
+			super("discord_protos.discord_users.v1.FrecencyUserSettings.PinnedEmojiPacks", [{
+				no: 1,
+				name: "pack_ids",
+				kind: "scalar",
+				repeat: 1,
+				T: 6,
+				L: 0
+			}]);
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.packIds = [];
+			if (value !== undefined) (0, runtime_3$3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						if (wireType === runtime_1$4.WireType.LengthDelimited) for (let e = reader.int32() + reader.pos; reader.pos < e;) message.packIds.push(reader.fixed64().toBigInt());
+else message.packIds.push(reader.fixed64().toBigInt());
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$3.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.packIds.length) {
+				writer.tag(1, runtime_1$4.WireType.LengthDelimited).fork();
+				for (let i = 0; i < message.packIds.length; i++) writer.fixed64(message.packIds[i]);
+				writer.join();
+			}
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$3.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message discord_protos.discord_users.v1.FrecencyUserSettings.PinnedEmojiPacks
+	*/
+	exports.FrecencyUserSettings_PinnedEmojiPacks = new FrecencyUserSettings_PinnedEmojiPacks$Type();
 } });
 
 //#endregion
@@ -34101,72 +33287,145 @@ var init_reflection_equals = __esm({ "node_modules/@protobuf-ts/runtime/build/es
 } });
 
 //#endregion
-//#region node_modules/discord-protos/dist/index.js
-var require_dist = __commonJS({ "node_modules/discord-protos/dist/index.js"(exports) {
-	var __createBinding = exports && exports.__createBinding || (Object.create ? function(o, m, k, k2) {
-		if (k2 === undefined) k2 = k;
-		var desc = Object.getOwnPropertyDescriptor(m, k);
-		if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) desc = {
-			enumerable: true,
-			get: function() {
-				return m[k];
+//#region node_modules/@protobuf-ts/runtime/build/es2015/reflection-binary-reader.js
+var ReflectionBinaryReader;
+var init_reflection_binary_reader = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015/reflection-binary-reader.js"() {
+	init_binary_format_contract();
+	init_reflection_info();
+	init_reflection_long_convert();
+	init_reflection_scalar_default();
+	ReflectionBinaryReader = class {
+		constructor(info) {
+			this.info = info;
+		}
+		prepare() {
+			var _a;
+			if (!this.fieldNoToField) {
+				const fieldsInput = (_a = this.info.fields) !== null && _a !== void 0 ? _a : [];
+				this.fieldNoToField = new Map(fieldsInput.map((field) => [field.no, field]));
 			}
-		};
-		Object.defineProperty(o, k2, desc);
-	} : function(o, m, k, k2) {
-		if (k2 === undefined) k2 = k;
-		o[k2] = m[k];
-	});
-	var __exportStar = exports && exports.__exportStar || function(m, exports$1) {
-		for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports$1, p)) __createBinding(exports$1, m, p);
-	};
-	Object.defineProperty(exports, "__esModule", { value: true });
-	const runtime_1 = (init_es2015(), __toCommonJS(es2015_exports));
-	/**
-	* Supports both node and web environments, replacement of previous Buffer.from() being node-only.
-	* This is specific to this package's usage, and not a replacement of Buffer.from() altogether
-	*/
-	const compatBuffer = {
-		from: function(input, encoding) {
-			if (typeof input === "string" && encoding === "base64") {
-				const encodedBytes = atob(input);
-				const bytes = new Uint8Array(encodedBytes.length);
-				for (let i = 0; i < encodedBytes.length; i++) bytes[i] = encodedBytes.charCodeAt(i);
-				return bytes;
-			} else if (!encoding && input instanceof Uint8Array) return input;
-			throw new Error("Invalid input type.");
-		},
-		toBase64String: function(buffer) {
-			let encodedBytes = "";
-			for (let i = 0; i < buffer.length; i++) encodedBytes += String.fromCharCode(buffer[i]);
-			return btoa(encodedBytes);
+		}
+		/**
+		* Reads a message from binary format into the target message.
+		*
+		* Repeated fields are appended. Map entries are added, overwriting
+		* existing keys.
+		*
+		* If a message field is already present, it will be merged with the
+		* new data.
+		*/
+		read(reader, message, options, length) {
+			this.prepare();
+			const end = length === undefined ? reader.len : reader.pos + length;
+			while (reader.pos < end) {
+				const [fieldNo, wireType] = reader.tag(), field = this.fieldNoToField.get(fieldNo);
+				if (!field) {
+					let u = options.readUnknownField;
+					if (u == "throw") throw new Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.info.typeName}`);
+					let d = reader.skip(wireType);
+					if (u !== false) (u === true ? UnknownFieldHandler.onRead : u)(this.info.typeName, message, fieldNo, wireType, d);
+					continue;
+				}
+				let target = message, repeated = field.repeat, localName = field.localName;
+				if (field.oneof) {
+					target = target[field.oneof];
+					if (target.oneofKind !== localName) target = message[field.oneof] = { oneofKind: localName };
+				}
+				switch (field.kind) {
+					case "scalar":
+					case "enum":
+						let T = field.kind == "enum" ? ScalarType.INT32 : field.T;
+						let L = field.kind == "scalar" ? field.L : undefined;
+						if (repeated) {
+							let arr = target[localName];
+							if (wireType == WireType.LengthDelimited && T != ScalarType.STRING && T != ScalarType.BYTES) {
+								let e = reader.uint32() + reader.pos;
+								while (reader.pos < e) arr.push(this.scalar(reader, T, L));
+							} else arr.push(this.scalar(reader, T, L));
+						} else target[localName] = this.scalar(reader, T, L);
+						break;
+					case "message":
+						if (repeated) {
+							let arr = target[localName];
+							let msg = field.T().internalBinaryRead(reader, reader.uint32(), options);
+							arr.push(msg);
+						} else target[localName] = field.T().internalBinaryRead(reader, reader.uint32(), options, target[localName]);
+						break;
+					case "map":
+						let [mapKey, mapVal] = this.mapEntry(field, reader, options);
+						target[localName][mapKey] = mapVal;
+						break;
+				}
+			}
+		}
+		/**
+		* Read a map field, expecting key field = 1, value field = 2
+		*/
+		mapEntry(field, reader, options) {
+			let length = reader.uint32();
+			let end = reader.pos + length;
+			let key = undefined;
+			let val = undefined;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						if (field.K == ScalarType.BOOL) key = reader.bool().toString();
+else key = this.scalar(reader, field.K, LongType.STRING);
+						break;
+					case 2:
+						switch (field.V.kind) {
+							case "scalar":
+								val = this.scalar(reader, field.V.T, field.V.L);
+								break;
+							case "enum":
+								val = reader.int32();
+								break;
+							case "message":
+								val = field.V.T().internalBinaryRead(reader, reader.uint32(), options);
+								break;
+						}
+						break;
+					default: throw new Error(`Unknown field ${fieldNo} (wire type ${wireType}) in map entry for ${this.info.typeName}#${field.name}`);
+				}
+			}
+			if (key === undefined) {
+				let keyRaw = reflectionScalarDefault(field.K);
+				key = field.K == ScalarType.BOOL ? keyRaw.toString() : keyRaw;
+			}
+			if (val === undefined) switch (field.V.kind) {
+				case "scalar":
+					val = reflectionScalarDefault(field.V.T, field.V.L);
+					break;
+				case "enum":
+					val = 0;
+					break;
+				case "message":
+					val = field.V.T().create();
+					break;
+			}
+			return [key, val];
+		}
+		scalar(reader, type, longType) {
+			switch (type) {
+				case ScalarType.INT32: return reader.int32();
+				case ScalarType.STRING: return reader.string();
+				case ScalarType.BOOL: return reader.bool();
+				case ScalarType.DOUBLE: return reader.double();
+				case ScalarType.FLOAT: return reader.float();
+				case ScalarType.INT64: return reflectionLongConvert(reader.int64(), longType);
+				case ScalarType.UINT64: return reflectionLongConvert(reader.uint64(), longType);
+				case ScalarType.FIXED64: return reflectionLongConvert(reader.fixed64(), longType);
+				case ScalarType.FIXED32: return reader.fixed32();
+				case ScalarType.BYTES: return reader.bytes();
+				case ScalarType.UINT32: return reader.uint32();
+				case ScalarType.SFIXED32: return reader.sfixed32();
+				case ScalarType.SFIXED64: return reflectionLongConvert(reader.sfixed64(), longType);
+				case ScalarType.SINT32: return reader.sint32();
+				case ScalarType.SINT64: return reflectionLongConvert(reader.sint64(), longType);
+			}
 		}
 	};
-	function toBase64(data) {
-		return compatBuffer.toBase64String(compatBuffer.from(this.toBinary(data)));
-	}
-	function fromBase64(base64) {
-		return this.fromBinary(compatBuffer.from(base64, "base64"));
-	}
-	runtime_1.MessageType.prototype.fromBase64 = fromBase64;
-	runtime_1.MessageType.prototype.toBase64 = toBase64;
-	__exportStar(require_PreloadedUserSettings(), exports);
-	__exportStar(require_FrecencyUserSettings(), exports);
-	__exportStar(require_User(), exports);
-	__exportStar(require_MediumUser(), exports);
-	__exportStar(require_UserData(), exports);
-	__exportStar(require_GuildShardingConfig(), exports);
-	__exportStar(require_AgreementsHistory(), exports);
-	__exportStar(require_Experiment(), exports);
-	__exportStar(require_AllocationAssignmentMode(), exports);
-	__exportStar(require_AllocationExposureMode(), exports);
-	__exportStar(require_QosToken(), exports);
-	__exportStar(require_Claims(), exports);
-	__exportStar(require_UserNotificationSettings(), exports);
-	__exportStar(require_ApplicationUserRoleConnection(), exports);
-	__exportStar(require_AcknowledgedApplicationDisclosures(), exports);
-	__exportStar(require_LocalizedSnowflake(), exports);
-	__exportStar(require_PremiumMarketingComponentProperties(), exports);
 } });
 
 //#endregion
@@ -34610,187 +33869,72 @@ else assertInt32(int32);
 } });
 
 //#endregion
-//#region node_modules/@protobuf-ts/runtime/build/es2015/reflection-json-writer.js
-var ReflectionJsonWriter;
-var init_reflection_json_writer = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015/reflection-json-writer.js"() {
-	init_base64();
-	init_pb_long();
-	init_reflection_info();
-	init_assert();
-	ReflectionJsonWriter = class {
-		constructor(info) {
-			var _a;
-			this.fields = (_a = info.fields) !== null && _a !== void 0 ? _a : [];
-		}
-		/**
-		* Converts the message to a JSON object, based on the field descriptors.
-		*/
-		write(message, options) {
-			const json = {}, source = message;
-			for (const field of this.fields) {
-				if (!field.oneof) {
-					let jsonValue$1 = this.field(field, source[field.localName], options);
-					if (jsonValue$1 !== undefined) json[options.useProtoFieldName ? field.name : field.jsonName] = jsonValue$1;
-					continue;
-				}
-				const group = source[field.oneof];
-				if (group.oneofKind !== field.localName) continue;
-				const opt = field.kind == "scalar" || field.kind == "enum" ? Object.assign(Object.assign({}, options), { emitDefaultValues: true }) : options;
-				let jsonValue = this.field(field, group[field.localName], opt);
-				assert(jsonValue !== undefined);
-				json[options.useProtoFieldName ? field.name : field.jsonName] = jsonValue;
+//#region node_modules/discord-protos/dist/index.js
+var require_dist = __commonJS({ "node_modules/discord-protos/dist/index.js"(exports) {
+	var __createBinding = exports && exports.__createBinding || (Object.create ? function(o, m, k, k2) {
+		if (k2 === undefined) k2 = k;
+		var desc = Object.getOwnPropertyDescriptor(m, k);
+		if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) desc = {
+			enumerable: true,
+			get: function() {
+				return m[k];
 			}
-			return json;
-		}
-		field(field, value, options) {
-			let jsonValue = undefined;
-			if (field.kind == "map") {
-				assert(typeof value == "object" && value !== null);
-				const jsonObj = {};
-				switch (field.V.kind) {
-					case "scalar":
-						for (const [entryKey, entryValue] of Object.entries(value)) {
-							const val = this.scalar(field.V.T, entryValue, field.name, false, true);
-							assert(val !== undefined);
-							jsonObj[entryKey.toString()] = val;
-						}
-						break;
-					case "message":
-						const messageType = field.V.T();
-						for (const [entryKey, entryValue] of Object.entries(value)) {
-							const val = this.message(messageType, entryValue, field.name, options);
-							assert(val !== undefined);
-							jsonObj[entryKey.toString()] = val;
-						}
-						break;
-					case "enum":
-						const enumInfo = field.V.T();
-						for (const [entryKey, entryValue] of Object.entries(value)) {
-							assert(entryValue === undefined || typeof entryValue == "number");
-							const val = this.enum(enumInfo, entryValue, field.name, false, true, options.enumAsInteger);
-							assert(val !== undefined);
-							jsonObj[entryKey.toString()] = val;
-						}
-						break;
-				}
-				if (options.emitDefaultValues || Object.keys(jsonObj).length > 0) jsonValue = jsonObj;
-			} else if (field.repeat) {
-				assert(Array.isArray(value));
-				const jsonArr = [];
-				switch (field.kind) {
-					case "scalar":
-						for (let i = 0; i < value.length; i++) {
-							const val = this.scalar(field.T, value[i], field.name, field.opt, true);
-							assert(val !== undefined);
-							jsonArr.push(val);
-						}
-						break;
-					case "enum":
-						const enumInfo = field.T();
-						for (let i = 0; i < value.length; i++) {
-							assert(value[i] === undefined || typeof value[i] == "number");
-							const val = this.enum(enumInfo, value[i], field.name, field.opt, true, options.enumAsInteger);
-							assert(val !== undefined);
-							jsonArr.push(val);
-						}
-						break;
-					case "message":
-						const messageType = field.T();
-						for (let i = 0; i < value.length; i++) {
-							const val = this.message(messageType, value[i], field.name, options);
-							assert(val !== undefined);
-							jsonArr.push(val);
-						}
-						break;
-				}
-				if (options.emitDefaultValues || jsonArr.length > 0 || options.emitDefaultValues) jsonValue = jsonArr;
-			} else switch (field.kind) {
-				case "scalar":
-					jsonValue = this.scalar(field.T, value, field.name, field.opt, options.emitDefaultValues);
-					break;
-				case "enum":
-					jsonValue = this.enum(field.T(), value, field.name, field.opt, options.emitDefaultValues, options.enumAsInteger);
-					break;
-				case "message":
-					jsonValue = this.message(field.T(), value, field.name, options);
-					break;
-			}
-			return jsonValue;
-		}
-		/**
-		* Returns `null` as the default for google.protobuf.NullValue.
-		*/
-		enum(type, value, fieldName, optional, emitDefaultValues, enumAsInteger) {
-			if (type[0] == "google.protobuf.NullValue") return !emitDefaultValues && !optional ? undefined : null;
-			if (value === undefined) {
-				assert(optional);
-				return undefined;
-			}
-			if (value === 0 && !emitDefaultValues && !optional) return undefined;
-			assert(typeof value == "number");
-			assert(Number.isInteger(value));
-			if (enumAsInteger || !type[1].hasOwnProperty(value)) return value;
-			if (type[2]) return type[2] + type[1][value];
-			return type[1][value];
-		}
-		message(type, value, fieldName, options) {
-			if (value === undefined) return options.emitDefaultValues ? null : undefined;
-			return type.internalJsonWrite(value, options);
-		}
-		scalar(type, value, fieldName, optional, emitDefaultValues) {
-			if (value === undefined) {
-				assert(optional);
-				return undefined;
-			}
-			const ed = emitDefaultValues || optional;
-			switch (type) {
-				case ScalarType.INT32:
-				case ScalarType.SFIXED32:
-				case ScalarType.SINT32:
-					if (value === 0) return ed ? 0 : undefined;
-					assertInt32(value);
-					return value;
-				case ScalarType.FIXED32:
-				case ScalarType.UINT32:
-					if (value === 0) return ed ? 0 : undefined;
-					assertUInt32(value);
-					return value;
-				case ScalarType.FLOAT: assertFloat32(value);
-				case ScalarType.DOUBLE:
-					if (value === 0) return ed ? 0 : undefined;
-					assert(typeof value == "number");
-					if (Number.isNaN(value)) return "NaN";
-					if (value === Number.POSITIVE_INFINITY) return "Infinity";
-					if (value === Number.NEGATIVE_INFINITY) return "-Infinity";
-					return value;
-				case ScalarType.STRING:
-					if (value === "") return ed ? "" : undefined;
-					assert(typeof value == "string");
-					return value;
-				case ScalarType.BOOL:
-					if (value === false) return ed ? false : undefined;
-					assert(typeof value == "boolean");
-					return value;
-				case ScalarType.UINT64:
-				case ScalarType.FIXED64:
-					assert(typeof value == "number" || typeof value == "string" || typeof value == "bigint");
-					let ulong = PbULong.from(value);
-					if (ulong.isZero() && !ed) return undefined;
-					return ulong.toString();
-				case ScalarType.INT64:
-				case ScalarType.SFIXED64:
-				case ScalarType.SINT64:
-					assert(typeof value == "number" || typeof value == "string" || typeof value == "bigint");
-					let long = PbLong.from(value);
-					if (long.isZero() && !ed) return undefined;
-					return long.toString();
-				case ScalarType.BYTES:
-					assert(value instanceof Uint8Array);
-					if (!value.byteLength) return ed ? "" : undefined;
-					return base64encode(value);
-			}
+		};
+		Object.defineProperty(o, k2, desc);
+	} : function(o, m, k, k2) {
+		if (k2 === undefined) k2 = k;
+		o[k2] = m[k];
+	});
+	var __exportStar = exports && exports.__exportStar || function(m, exports$1) {
+		for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports$1, p)) __createBinding(exports$1, m, p);
+	};
+	Object.defineProperty(exports, "__esModule", { value: true });
+	const runtime_1$3 = (init_es2015(), __toCommonJS(es2015_exports));
+	/**
+	* Supports both node and web environments, replacement of previous Buffer.from() being node-only.
+	* This is specific to this package's usage, and not a replacement of Buffer.from() altogether
+	*/
+	const compatBuffer = {
+		from: function(input, encoding) {
+			if (typeof input === "string" && encoding === "base64") {
+				const encodedBytes = atob(input);
+				const bytes = new Uint8Array(encodedBytes.length);
+				for (let i = 0; i < encodedBytes.length; i++) bytes[i] = encodedBytes.charCodeAt(i);
+				return bytes;
+			} else if (!encoding && input instanceof Uint8Array) return input;
+			throw new Error("Invalid input type.");
+		},
+		toBase64String: function(buffer) {
+			let encodedBytes = "";
+			for (let i = 0; i < buffer.length; i++) encodedBytes += String.fromCharCode(buffer[i]);
+			return btoa(encodedBytes);
 		}
 	};
+	function toBase64(data) {
+		return compatBuffer.toBase64String(compatBuffer.from(this.toBinary(data)));
+	}
+	function fromBase64(base64) {
+		return this.fromBinary(compatBuffer.from(base64, "base64"));
+	}
+	runtime_1$3.MessageType.prototype.fromBase64 = fromBase64;
+	runtime_1$3.MessageType.prototype.toBase64 = toBase64;
+	__exportStar(require_PreloadedUserSettings(), exports);
+	__exportStar(require_FrecencyUserSettings(), exports);
+	__exportStar(require_User(), exports);
+	__exportStar(require_MediumUser(), exports);
+	__exportStar(require_UserData(), exports);
+	__exportStar(require_GuildShardingConfig(), exports);
+	__exportStar(require_AgreementsHistory(), exports);
+	__exportStar(require_Experiment(), exports);
+	__exportStar(require_AllocationAssignmentMode(), exports);
+	__exportStar(require_AllocationExposureMode(), exports);
+	__exportStar(require_QosToken(), exports);
+	__exportStar(require_Claims(), exports);
+	__exportStar(require_UserNotificationSettings(), exports);
+	__exportStar(require_ApplicationUserRoleConnection(), exports);
+	__exportStar(require_AcknowledgedApplicationDisclosures(), exports);
+	__exportStar(require_LocalizedSnowflake(), exports);
+	__exportStar(require_PremiumMarketingComponentProperties(), exports);
 } });
 
 //#endregion
@@ -34917,6 +34061,661 @@ var init_assert = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015/assert
 } });
 
 //#endregion
+//#region node_modules/discord-protos/dist/discord_protos/google/protobuf/wrappers.js
+var require_wrappers = __commonJS({ "node_modules/discord-protos/dist/discord_protos/google/protobuf/wrappers.js"(exports) {
+	Object.defineProperty(exports, "__esModule", { value: true });
+	exports.BytesValue = exports.StringValue = exports.BoolValue = exports.UInt32Value = exports.Int32Value = exports.UInt64Value = exports.Int64Value = exports.FloatValue = exports.DoubleValue = void 0;
+	const runtime_1$2 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_2$2 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_3$2 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_4$2 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_5$2 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_6$2 = (init_es2015(), __toCommonJS(es2015_exports));
+	var DoubleValue$Type = class extends runtime_6$2.MessageType {
+		constructor() {
+			super("google.protobuf.DoubleValue", [{
+				no: 1,
+				name: "value",
+				kind: "scalar",
+				T: 1
+			}]);
+		}
+		/**
+		* Encode `DoubleValue` to JSON number.
+		*/
+		internalJsonWrite(message, options) {
+			return this.refJsonWriter.scalar(2, message.value, "value", false, true);
+		}
+		/**
+		* Decode `DoubleValue` from JSON number.
+		*/
+		internalJsonRead(json, options, target) {
+			if (!target) target = this.create();
+			target.value = this.refJsonReader.scalar(json, 1, undefined, "value");
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.value = 0;
+			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.value = reader.double();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_4$2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.value !== 0) writer.tag(1, runtime_3$2.WireType.Bit64).double(message.value);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_4$2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.DoubleValue
+	*/
+	exports.DoubleValue = new DoubleValue$Type();
+	var FloatValue$Type = class extends runtime_6$2.MessageType {
+		constructor() {
+			super("google.protobuf.FloatValue", [{
+				no: 1,
+				name: "value",
+				kind: "scalar",
+				T: 2
+			}]);
+		}
+		/**
+		* Encode `FloatValue` to JSON number.
+		*/
+		internalJsonWrite(message, options) {
+			return this.refJsonWriter.scalar(1, message.value, "value", false, true);
+		}
+		/**
+		* Decode `FloatValue` from JSON number.
+		*/
+		internalJsonRead(json, options, target) {
+			if (!target) target = this.create();
+			target.value = this.refJsonReader.scalar(json, 1, undefined, "value");
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.value = 0;
+			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.value = reader.float();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_4$2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.value !== 0) writer.tag(1, runtime_3$2.WireType.Bit32).float(message.value);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_4$2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.FloatValue
+	*/
+	exports.FloatValue = new FloatValue$Type();
+	var Int64Value$Type = class extends runtime_6$2.MessageType {
+		constructor() {
+			super("google.protobuf.Int64Value", [{
+				no: 1,
+				name: "value",
+				kind: "scalar",
+				T: 3,
+				L: 0
+			}]);
+		}
+		/**
+		* Encode `Int64Value` to JSON string.
+		*/
+		internalJsonWrite(message, options) {
+			return this.refJsonWriter.scalar(runtime_1$2.ScalarType.INT64, message.value, "value", false, true);
+		}
+		/**
+		* Decode `Int64Value` from JSON string.
+		*/
+		internalJsonRead(json, options, target) {
+			if (!target) target = this.create();
+			target.value = this.refJsonReader.scalar(json, runtime_1$2.ScalarType.INT64, runtime_2$2.LongType.BIGINT, "value");
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.value = 0n;
+			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.value = reader.int64().toBigInt();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_4$2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.value !== 0n) writer.tag(1, runtime_3$2.WireType.Varint).int64(message.value);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_4$2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.Int64Value
+	*/
+	exports.Int64Value = new Int64Value$Type();
+	var UInt64Value$Type = class extends runtime_6$2.MessageType {
+		constructor() {
+			super("google.protobuf.UInt64Value", [{
+				no: 1,
+				name: "value",
+				kind: "scalar",
+				T: 4,
+				L: 0
+			}]);
+		}
+		/**
+		* Encode `UInt64Value` to JSON string.
+		*/
+		internalJsonWrite(message, options) {
+			return this.refJsonWriter.scalar(runtime_1$2.ScalarType.UINT64, message.value, "value", false, true);
+		}
+		/**
+		* Decode `UInt64Value` from JSON string.
+		*/
+		internalJsonRead(json, options, target) {
+			if (!target) target = this.create();
+			target.value = this.refJsonReader.scalar(json, runtime_1$2.ScalarType.UINT64, runtime_2$2.LongType.BIGINT, "value");
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.value = 0n;
+			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.value = reader.uint64().toBigInt();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_4$2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.value !== 0n) writer.tag(1, runtime_3$2.WireType.Varint).uint64(message.value);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_4$2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.UInt64Value
+	*/
+	exports.UInt64Value = new UInt64Value$Type();
+	var Int32Value$Type = class extends runtime_6$2.MessageType {
+		constructor() {
+			super("google.protobuf.Int32Value", [{
+				no: 1,
+				name: "value",
+				kind: "scalar",
+				T: 5
+			}]);
+		}
+		/**
+		* Encode `Int32Value` to JSON string.
+		*/
+		internalJsonWrite(message, options) {
+			return this.refJsonWriter.scalar(5, message.value, "value", false, true);
+		}
+		/**
+		* Decode `Int32Value` from JSON string.
+		*/
+		internalJsonRead(json, options, target) {
+			if (!target) target = this.create();
+			target.value = this.refJsonReader.scalar(json, 5, undefined, "value");
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.value = 0;
+			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.value = reader.int32();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_4$2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.value !== 0) writer.tag(1, runtime_3$2.WireType.Varint).int32(message.value);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_4$2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.Int32Value
+	*/
+	exports.Int32Value = new Int32Value$Type();
+	var UInt32Value$Type = class extends runtime_6$2.MessageType {
+		constructor() {
+			super("google.protobuf.UInt32Value", [{
+				no: 1,
+				name: "value",
+				kind: "scalar",
+				T: 13
+			}]);
+		}
+		/**
+		* Encode `UInt32Value` to JSON string.
+		*/
+		internalJsonWrite(message, options) {
+			return this.refJsonWriter.scalar(13, message.value, "value", false, true);
+		}
+		/**
+		* Decode `UInt32Value` from JSON string.
+		*/
+		internalJsonRead(json, options, target) {
+			if (!target) target = this.create();
+			target.value = this.refJsonReader.scalar(json, 13, undefined, "value");
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.value = 0;
+			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.value = reader.uint32();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_4$2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.value !== 0) writer.tag(1, runtime_3$2.WireType.Varint).uint32(message.value);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_4$2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.UInt32Value
+	*/
+	exports.UInt32Value = new UInt32Value$Type();
+	var BoolValue$Type = class extends runtime_6$2.MessageType {
+		constructor() {
+			super("google.protobuf.BoolValue", [{
+				no: 1,
+				name: "value",
+				kind: "scalar",
+				T: 8
+			}]);
+		}
+		/**
+		* Encode `BoolValue` to JSON bool.
+		*/
+		internalJsonWrite(message, options) {
+			return message.value;
+		}
+		/**
+		* Decode `BoolValue` from JSON bool.
+		*/
+		internalJsonRead(json, options, target) {
+			if (!target) target = this.create();
+			target.value = this.refJsonReader.scalar(json, 8, undefined, "value");
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.value = false;
+			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.value = reader.bool();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_4$2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.value !== false) writer.tag(1, runtime_3$2.WireType.Varint).bool(message.value);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_4$2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.BoolValue
+	*/
+	exports.BoolValue = new BoolValue$Type();
+	var StringValue$Type = class extends runtime_6$2.MessageType {
+		constructor() {
+			super("google.protobuf.StringValue", [{
+				no: 1,
+				name: "value",
+				kind: "scalar",
+				T: 9
+			}]);
+		}
+		/**
+		* Encode `StringValue` to JSON string.
+		*/
+		internalJsonWrite(message, options) {
+			return message.value;
+		}
+		/**
+		* Decode `StringValue` from JSON string.
+		*/
+		internalJsonRead(json, options, target) {
+			if (!target) target = this.create();
+			target.value = this.refJsonReader.scalar(json, 9, undefined, "value");
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.value = "";
+			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.value = reader.string();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_4$2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.value !== "") writer.tag(1, runtime_3$2.WireType.LengthDelimited).string(message.value);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_4$2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.StringValue
+	*/
+	exports.StringValue = new StringValue$Type();
+	var BytesValue$Type = class extends runtime_6$2.MessageType {
+		constructor() {
+			super("google.protobuf.BytesValue", [{
+				no: 1,
+				name: "value",
+				kind: "scalar",
+				T: 12
+			}]);
+		}
+		/**
+		* Encode `BytesValue` to JSON string.
+		*/
+		internalJsonWrite(message, options) {
+			return this.refJsonWriter.scalar(12, message.value, "value", false, true);
+		}
+		/**
+		* Decode `BytesValue` from JSON string.
+		*/
+		internalJsonRead(json, options, target) {
+			if (!target) target = this.create();
+			target.value = this.refJsonReader.scalar(json, 12, undefined, "value");
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.value = new Uint8Array(0);
+			if (value !== undefined) (0, runtime_5$2.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.value = reader.bytes();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_4$2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.value.length) writer.tag(1, runtime_3$2.WireType.LengthDelimited).bytes(message.value);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_4$2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.BytesValue
+	*/
+	exports.BytesValue = new BytesValue$Type();
+} });
+
+//#endregion
+//#region node_modules/discord-protos/dist/discord_protos/google/protobuf/timestamp.js
+var require_timestamp = __commonJS({ "node_modules/discord-protos/dist/discord_protos/google/protobuf/timestamp.js"(exports) {
+	Object.defineProperty(exports, "__esModule", { value: true });
+	exports.Timestamp = void 0;
+	const runtime_1$1 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_2$1 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_3$1 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_4$1 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_5$1 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_6$1 = (init_es2015(), __toCommonJS(es2015_exports));
+	var Timestamp$Type = class extends runtime_6$1.MessageType {
+		constructor() {
+			super("google.protobuf.Timestamp", [{
+				no: 1,
+				name: "seconds",
+				kind: "scalar",
+				T: 3,
+				L: 0
+			}, {
+				no: 2,
+				name: "nanos",
+				kind: "scalar",
+				T: 5
+			}]);
+		}
+		/**
+		* Creates a new `Timestamp` for the current time.
+		*/
+		now() {
+			const msg = this.create();
+			const ms = Date.now();
+			msg.seconds = runtime_5$1.PbLong.from(Math.floor(ms / 1e3)).toBigInt();
+			msg.nanos = ms % 1e3 * 1e6;
+			return msg;
+		}
+		/**
+		* Converts a `Timestamp` to a JavaScript Date.
+		*/
+		toDate(message) {
+			return new Date(runtime_5$1.PbLong.from(message.seconds).toNumber() * 1e3 + Math.ceil(message.nanos / 1e6));
+		}
+		/**
+		* Converts a JavaScript Date to a `Timestamp`.
+		*/
+		fromDate(date) {
+			const msg = this.create();
+			const ms = date.getTime();
+			msg.seconds = runtime_5$1.PbLong.from(Math.floor(ms / 1e3)).toBigInt();
+			msg.nanos = (ms % 1e3 + (ms < 0 && ms % 1e3 !== 0 ? 1e3 : 0)) * 1e6;
+			return msg;
+		}
+		/**
+		* In JSON format, the `Timestamp` type is encoded as a string
+		* in the RFC 3339 format.
+		*/
+		internalJsonWrite(message, options) {
+			let ms = runtime_5$1.PbLong.from(message.seconds).toNumber() * 1e3;
+			if (ms < Date.parse("0001-01-01T00:00:00Z") || ms > Date.parse("9999-12-31T23:59:59Z")) throw new Error("Unable to encode Timestamp to JSON. Must be from 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z inclusive.");
+			if (message.nanos < 0) throw new Error("Unable to encode invalid Timestamp to JSON. Nanos must not be negative.");
+			let z = "Z";
+			if (message.nanos > 0) {
+				let nanosStr = (message.nanos + 1e9).toString().substring(1);
+				if (nanosStr.substring(3) === "000000") z = "." + nanosStr.substring(0, 3) + "Z";
+else if (nanosStr.substring(6) === "000") z = "." + nanosStr.substring(0, 6) + "Z";
+else z = "." + nanosStr + "Z";
+			}
+			return new Date(ms).toISOString().replace(".000Z", z);
+		}
+		/**
+		* In JSON format, the `Timestamp` type is encoded as a string
+		* in the RFC 3339 format.
+		*/
+		internalJsonRead(json, options, target) {
+			if (typeof json !== "string") throw new Error("Unable to parse Timestamp from JSON " + (0, runtime_4$1.typeofJsonValue)(json) + ".");
+			let matches = json.match(/^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:Z|\.([0-9]{3,9})Z|([+-][0-9][0-9]:[0-9][0-9]))$/);
+			if (!matches) throw new Error("Unable to parse Timestamp from JSON. Invalid format.");
+			let ms = Date.parse(matches[1] + "-" + matches[2] + "-" + matches[3] + "T" + matches[4] + ":" + matches[5] + ":" + matches[6] + (matches[8] ? matches[8] : "Z"));
+			if (Number.isNaN(ms)) throw new Error("Unable to parse Timestamp from JSON. Invalid value.");
+			if (ms < Date.parse("0001-01-01T00:00:00Z") || ms > Date.parse("9999-12-31T23:59:59Z")) throw new globalThis.Error("Unable to parse Timestamp from JSON. Must be from 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z inclusive.");
+			if (!target) target = this.create();
+			target.seconds = runtime_5$1.PbLong.from(ms / 1e3).toBigInt();
+			target.nanos = 0;
+			if (matches[7]) target.nanos = parseInt("1" + matches[7] + "0".repeat(9 - matches[7].length)) - 1e9;
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.seconds = 0n;
+			message.nanos = 0;
+			if (value !== undefined) (0, runtime_3$1.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.seconds = reader.int64().toBigInt();
+						break;
+					case 2:
+						message.nanos = reader.int32();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2$1.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.seconds !== 0n) writer.tag(1, runtime_1$1.WireType.Varint).int64(message.seconds);
+			if (message.nanos !== 0) writer.tag(2, runtime_1$1.WireType.Varint).int32(message.nanos);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2$1.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.Timestamp
+	*/
+	exports.Timestamp = new Timestamp$Type();
+} });
+
+//#endregion
 //#region node_modules/@protobuf-ts/runtime/build/es2015/goog-varint.js
 function varint64read() {
 	let lowBits = 0;
@@ -34977,9 +34776,9 @@ function int64fromString(dec) {
 		const digit1e6 = Number(dec.slice(begin, end));
 		highBits *= base;
 		lowBits = lowBits * base + digit1e6;
-		if (lowBits >= TWO_PWR_32_DBL) {
-			highBits = highBits + (lowBits / TWO_PWR_32_DBL | 0);
-			lowBits = lowBits % TWO_PWR_32_DBL;
+		if (lowBits >= TWO_PWR_32_DBL$1) {
+			highBits = highBits + (lowBits / TWO_PWR_32_DBL$1 | 0);
+			lowBits = lowBits % TWO_PWR_32_DBL$1;
 		}
 	}
 	add1e6digit(-24, -18);
@@ -34993,7 +34792,7 @@ function int64fromString(dec) {
 	];
 }
 function int64toString(bitsLow, bitsHigh) {
-	if (bitsHigh >>> 0 <= 2097151) return "" + (TWO_PWR_32_DBL * bitsHigh + (bitsLow >>> 0));
+	if (bitsHigh >>> 0 <= 2097151) return "" + (TWO_PWR_32_DBL$1 * bitsHigh + (bitsLow >>> 0));
 	let low = bitsLow & 16777215;
 	let mid = (bitsLow >>> 24 | bitsHigh << 8) >>> 0 & 16777215;
 	let high = bitsHigh >> 16 & 65535;
@@ -35075,9 +34874,9 @@ function varint32read() {
 	this.assertBounds();
 	return result >>> 0;
 }
-var TWO_PWR_32_DBL;
+var TWO_PWR_32_DBL$1;
 var init_goog_varint = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015/goog-varint.js"() {
-	TWO_PWR_32_DBL = 4294967296;
+	TWO_PWR_32_DBL$1 = 4294967296;
 } });
 
 //#endregion
@@ -35094,88 +34893,289 @@ var init_reflection_long_convert = __esm({ "node_modules/@protobuf-ts/runtime/bu
 } });
 
 //#endregion
-//#region node_modules/@protobuf-ts/runtime/build/es2015/binary-format-contract.js
-function mergeBinaryOptions(a, b) {
-	return Object.assign(Object.assign({}, a), b);
-}
-var UnknownFieldHandler, WireType;
-var init_binary_format_contract = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015/binary-format-contract.js"() {
-	(function(UnknownFieldHandler$1) {
+//#region node_modules/discord-protos/dist/discord_protos/google/protobuf/duration.js
+var require_duration = __commonJS({ "node_modules/discord-protos/dist/discord_protos/google/protobuf/duration.js"(exports) {
+	Object.defineProperty(exports, "__esModule", { value: true });
+	exports.Duration = void 0;
+	const runtime_1 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_2 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_3 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_4 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_5 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_6 = (init_es2015(), __toCommonJS(es2015_exports));
+	var Duration$Type = class extends runtime_6.MessageType {
+		constructor() {
+			super("google.protobuf.Duration", [{
+				no: 1,
+				name: "seconds",
+				kind: "scalar",
+				T: 3,
+				L: 0
+			}, {
+				no: 2,
+				name: "nanos",
+				kind: "scalar",
+				T: 5
+			}]);
+		}
 		/**
-		* The symbol used to store unknown fields for a message.
-		* The property must conform to `UnknownFieldContainer`.
+		* Encode `Duration` to JSON string like "3.000001s".
 		*/
-		UnknownFieldHandler$1.symbol = Symbol.for("protobuf-ts/unknown");
-		/**
-		* Store an unknown field during binary read directly on the message.
-		* This method is compatible with `BinaryReadOptions.readUnknownField`.
-		*/
-		UnknownFieldHandler$1.onRead = (typeName, message, fieldNo, wireType, data) => {
-			let container = is(message) ? message[UnknownFieldHandler$1.symbol] : message[UnknownFieldHandler$1.symbol] = [];
-			container.push({
-				no: fieldNo,
-				wireType,
-				data
-			});
-		};
-		/**
-		* Write unknown fields stored for the message to the writer.
-		* This method is compatible with `BinaryWriteOptions.writeUnknownFields`.
-		*/
-		UnknownFieldHandler$1.onWrite = (typeName, message, writer) => {
-			for (let { no, wireType, data } of UnknownFieldHandler$1.list(message)) writer.tag(no, wireType).raw(data);
-		};
-		/**
-		* List unknown fields stored for the message.
-		* Note that there may be multiples fields with the same number.
-		*/
-		UnknownFieldHandler$1.list = (message, fieldNo) => {
-			if (is(message)) {
-				let all = message[UnknownFieldHandler$1.symbol];
-				return fieldNo ? all.filter((uf) => uf.no == fieldNo) : all;
+		internalJsonWrite(message, options) {
+			let s = runtime_5.PbLong.from(message.seconds).toNumber();
+			if (s > 315576e6 || s < -315576e6) throw new Error("Duration value out of range.");
+			let text = message.seconds.toString();
+			if (s === 0 && message.nanos < 0) text = "-" + text;
+			if (message.nanos !== 0) {
+				let nanosStr = Math.abs(message.nanos).toString();
+				nanosStr = "0".repeat(9 - nanosStr.length) + nanosStr;
+				if (nanosStr.substring(3) === "000000") nanosStr = nanosStr.substring(0, 3);
+else if (nanosStr.substring(6) === "000") nanosStr = nanosStr.substring(0, 6);
+				text += "." + nanosStr;
 			}
-			return [];
-		};
+			return text + "s";
+		}
 		/**
-		* Returns the last unknown field by field number.
+		* Decode `Duration` from JSON string like "3.000001s"
 		*/
-		UnknownFieldHandler$1.last = (message, fieldNo) => UnknownFieldHandler$1.list(message, fieldNo).slice(-1)[0];
-		const is = (message) => message && Array.isArray(message[UnknownFieldHandler$1.symbol]);
-	})(UnknownFieldHandler || (UnknownFieldHandler = {}));
-	(function(WireType$1) {
+		internalJsonRead(json, options, target) {
+			if (typeof json !== "string") throw new Error("Unable to parse Duration from JSON " + (0, runtime_4.typeofJsonValue)(json) + ". Expected string.");
+			let match = json.match(/^(-?)([0-9]+)(?:\.([0-9]+))?s/);
+			if (match === null) throw new Error("Unable to parse Duration from JSON string. Invalid format.");
+			if (!target) target = this.create();
+			let [, sign, secs, nanos] = match;
+			let longSeconds = runtime_5.PbLong.from(sign + secs);
+			if (longSeconds.toNumber() > 315576e6 || longSeconds.toNumber() < -315576e6) throw new Error("Unable to parse Duration from JSON string. Value out of range.");
+			target.seconds = longSeconds.toBigInt();
+			if (typeof nanos == "string") {
+				let nanosStr = sign + nanos + "0".repeat(9 - nanos.length);
+				target.nanos = parseInt(nanosStr);
+			}
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.seconds = 0n;
+			message.nanos = 0;
+			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.seconds = reader.int64().toBigInt();
+						break;
+					case 2:
+						message.nanos = reader.int32();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.seconds !== 0n) writer.tag(1, runtime_1.WireType.Varint).int64(message.seconds);
+			if (message.nanos !== 0) writer.tag(2, runtime_1.WireType.Varint).int32(message.nanos);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.Duration
+	*/
+	exports.Duration = new Duration$Type();
+} });
+
+//#endregion
+//#region node_modules/@protobuf-ts/runtime/build/es2015/pb-long.js
+function detectBi() {
+	const dv = new DataView(new ArrayBuffer(8));
+	const ok = globalThis.BigInt !== undefined && typeof dv.getBigInt64 === "function" && typeof dv.getBigUint64 === "function" && typeof dv.setBigInt64 === "function" && typeof dv.setBigUint64 === "function";
+	BI = ok ? {
+		MIN: BigInt("-9223372036854775808"),
+		MAX: BigInt("9223372036854775807"),
+		UMIN: BigInt("0"),
+		UMAX: BigInt("18446744073709551615"),
+		C: BigInt,
+		V: dv
+	} : undefined;
+}
+function assertBi(bi) {
+	if (!bi) throw new Error("BigInt unavailable, see https://github.com/timostamm/protobuf-ts/blob/v1.0.8/MANUAL.md#bigint-support");
+}
+var BI, RE_DECIMAL_STR, TWO_PWR_32_DBL, HALF_2_PWR_32, SharedPbLong, PbULong, PbLong;
+var init_pb_long = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015/pb-long.js"() {
+	init_goog_varint();
+	detectBi();
+	RE_DECIMAL_STR = /^-?[0-9]+$/;
+	TWO_PWR_32_DBL = 4294967296;
+	HALF_2_PWR_32 = 2147483648;
+	SharedPbLong = class {
 		/**
-		* Used for int32, int64, uint32, uint64, sint32, sint64, bool, enum
+		* Create a new instance with the given bits.
 		*/
-		WireType$1[WireType$1["Varint"] = 0] = "Varint";
+		constructor(lo, hi) {
+			this.lo = lo | 0;
+			this.hi = hi | 0;
+		}
 		/**
-		* Used for fixed64, sfixed64, double.
-		* Always 8 bytes with little-endian byte order.
+		* Is this instance equal to 0?
 		*/
-		WireType$1[WireType$1["Bit64"] = 1] = "Bit64";
+		isZero() {
+			return this.lo == 0 && this.hi == 0;
+		}
 		/**
-		* Used for string, bytes, embedded messages, packed repeated fields
-		*
-		* Only repeated numeric types (types which use the varint, 32-bit,
-		* or 64-bit wire types) can be packed. In proto3, such fields are
-		* packed by default.
+		* Convert to a native number.
 		*/
-		WireType$1[WireType$1["LengthDelimited"] = 2] = "LengthDelimited";
+		toNumber() {
+			let result = this.hi * TWO_PWR_32_DBL + (this.lo >>> 0);
+			if (!Number.isSafeInteger(result)) throw new Error("cannot convert to safe number");
+			return result;
+		}
+	};
+	PbULong = class PbULong extends SharedPbLong {
 		/**
-		* Used for groups
-		* @deprecated
+		* Create instance from a `string`, `number` or `bigint`.
 		*/
-		WireType$1[WireType$1["StartGroup"] = 3] = "StartGroup";
+		static from(value) {
+			if (BI) switch (typeof value) {
+				case "string":
+					if (value == "0") return this.ZERO;
+					if (value == "") throw new Error("string is no integer");
+					value = BI.C(value);
+				case "number":
+					if (value === 0) return this.ZERO;
+					value = BI.C(value);
+				case "bigint":
+					if (!value) return this.ZERO;
+					if (value < BI.UMIN) throw new Error("signed value for ulong");
+					if (value > BI.UMAX) throw new Error("ulong too large");
+					BI.V.setBigUint64(0, value, true);
+					return new PbULong(BI.V.getInt32(0, true), BI.V.getInt32(4, true));
+			}
+else switch (typeof value) {
+				case "string":
+					if (value == "0") return this.ZERO;
+					value = value.trim();
+					if (!RE_DECIMAL_STR.test(value)) throw new Error("string is no integer");
+					let [minus, lo, hi] = int64fromString(value);
+					if (minus) throw new Error("signed value for ulong");
+					return new PbULong(lo, hi);
+				case "number":
+					if (value == 0) return this.ZERO;
+					if (!Number.isSafeInteger(value)) throw new Error("number is no integer");
+					if (value < 0) throw new Error("signed value for ulong");
+					return new PbULong(value, value / TWO_PWR_32_DBL);
+			}
+			throw new Error("unknown value " + typeof value);
+		}
 		/**
-		* Used for groups
-		* @deprecated
+		* Convert to decimal string.
 		*/
-		WireType$1[WireType$1["EndGroup"] = 4] = "EndGroup";
+		toString() {
+			return BI ? this.toBigInt().toString() : int64toString(this.lo, this.hi);
+		}
 		/**
-		* Used for fixed32, sfixed32, float.
-		* Always 4 bytes with little-endian byte order.
+		* Convert to native bigint.
 		*/
-		WireType$1[WireType$1["Bit32"] = 5] = "Bit32";
-	})(WireType || (WireType = {}));
+		toBigInt() {
+			assertBi(BI);
+			BI.V.setInt32(0, this.lo, true);
+			BI.V.setInt32(4, this.hi, true);
+			return BI.V.getBigUint64(0, true);
+		}
+	};
+	/**
+	* ulong 0 singleton.
+	*/
+	PbULong.ZERO = new PbULong(0, 0);
+	PbLong = class PbLong extends SharedPbLong {
+		/**
+		* Create instance from a `string`, `number` or `bigint`.
+		*/
+		static from(value) {
+			if (BI) switch (typeof value) {
+				case "string":
+					if (value == "0") return this.ZERO;
+					if (value == "") throw new Error("string is no integer");
+					value = BI.C(value);
+				case "number":
+					if (value === 0) return this.ZERO;
+					value = BI.C(value);
+				case "bigint":
+					if (!value) return this.ZERO;
+					if (value < BI.MIN) throw new Error("signed long too small");
+					if (value > BI.MAX) throw new Error("signed long too large");
+					BI.V.setBigInt64(0, value, true);
+					return new PbLong(BI.V.getInt32(0, true), BI.V.getInt32(4, true));
+			}
+else switch (typeof value) {
+				case "string":
+					if (value == "0") return this.ZERO;
+					value = value.trim();
+					if (!RE_DECIMAL_STR.test(value)) throw new Error("string is no integer");
+					let [minus, lo, hi] = int64fromString(value);
+					if (minus) {
+						if (hi > HALF_2_PWR_32 || hi == HALF_2_PWR_32 && lo != 0) throw new Error("signed long too small");
+					} else if (hi >= HALF_2_PWR_32) throw new Error("signed long too large");
+					let pbl = new PbLong(lo, hi);
+					return minus ? pbl.negate() : pbl;
+				case "number":
+					if (value == 0) return this.ZERO;
+					if (!Number.isSafeInteger(value)) throw new Error("number is no integer");
+					return value > 0 ? new PbLong(value, value / TWO_PWR_32_DBL) : new PbLong(-value, -value / TWO_PWR_32_DBL).negate();
+			}
+			throw new Error("unknown value " + typeof value);
+		}
+		/**
+		* Do we have a minus sign?
+		*/
+		isNegative() {
+			return (this.hi & HALF_2_PWR_32) !== 0;
+		}
+		/**
+		* Negate two's complement.
+		* Invert all the bits and add one to the result.
+		*/
+		negate() {
+			let hi = ~this.hi, lo = this.lo;
+			if (lo) lo = ~lo + 1;
+else hi += 1;
+			return new PbLong(lo, hi);
+		}
+		/**
+		* Convert to decimal string.
+		*/
+		toString() {
+			if (BI) return this.toBigInt().toString();
+			if (this.isNegative()) {
+				let n = this.negate();
+				return "-" + int64toString(n.lo, n.hi);
+			}
+			return int64toString(this.lo, this.hi);
+		}
+		/**
+		* Convert to native bigint.
+		*/
+		toBigInt() {
+			assertBi(BI);
+			BI.V.setInt32(0, this.lo, true);
+			BI.V.setInt32(4, this.hi, true);
+			return BI.V.getBigInt64(0, true);
+		}
+	};
+	/**
+	* long 0 singleton.
+	*/
+	PbLong.ZERO = new PbLong(0, 0);
 } });
 
 //#endregion

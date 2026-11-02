@@ -144,8 +144,8 @@ async function startExport(channelId, { formatId, ignoreHumans, ignoreApps }) {
 
 //#endregion
 //#region plugins/channel-export/modal.tsx
-var import_web$5 = __toESM(require_web(), 1);
 var import_web$6 = __toESM(require_web(), 1);
+var import_web$7 = __toESM(require_web(), 1);
 const { solid: { For, Show }, solidStore: { createStore }, ui: { Button, ButtonColors, ModalBody, ModalFooter, ModalHeader, ModalRoot, SelectItem, SelectOption, SwitchItem, Text, openModal } } = shelter;
 const [options, setOptions] = createStore({
 	formatId: "json",
@@ -153,31 +153,31 @@ const [options, setOptions] = createStore({
 	ignoreApps: false
 });
 function ExportModal(props) {
-	return (0, import_web$6.createComponent)(ModalRoot, { get children() {
-		return [(0, import_web$6.createComponent)(ModalHeader, {
+	return (0, import_web$7.createComponent)(ModalRoot, { get children() {
+		return [(0, import_web$7.createComponent)(ModalHeader, {
 			get close() {
 				return props.close;
 			},
 			children: "Export channel"
-		}), (0, import_web$6.createComponent)(Show, {
+		}), (0, import_web$7.createComponent)(Show, {
 			get when() {
 				return exportStatus();
 			},
 			get fallback() {
-				return [(0, import_web$6.createComponent)(ModalBody, { get children() {
+				return [(0, import_web$7.createComponent)(ModalBody, { get children() {
 					return [
-						(0, import_web$6.createComponent)(SelectItem, {
+						(0, import_web$7.createComponent)(SelectItem, {
 							label: "Format",
 							get value() {
 								return options.formatId;
 							},
 							onChange: (formatId) => setOptions("formatId", formatId),
 							get children() {
-								return (0, import_web$6.createComponent)(For, {
+								return (0, import_web$7.createComponent)(For, {
 									get each() {
 										return Object.keys(FORMATS);
 									},
-									children: (formatId) => (0, import_web$6.createComponent)(SelectOption, {
+									children: (formatId) => (0, import_web$7.createComponent)(SelectOption, {
 										value: formatId,
 										get children() {
 											return FORMATS[formatId].label;
@@ -186,14 +186,14 @@ function ExportModal(props) {
 								});
 							}
 						}),
-						(0, import_web$6.createComponent)(SwitchItem, {
+						(0, import_web$7.createComponent)(SwitchItem, {
 							get checked() {
 								return options.ignoreHumans;
 							},
 							onChange: (ignore) => setOptions("ignoreHumans", ignore),
 							children: "Ignore humans"
 						}),
-						(0, import_web$6.createComponent)(SwitchItem, {
+						(0, import_web$7.createComponent)(SwitchItem, {
 							get checked() {
 								return options.ignoreApps;
 							},
@@ -202,8 +202,8 @@ function ExportModal(props) {
 							children: "Ignore apps"
 						})
 					];
-				} }), (0, import_web$6.createComponent)(ModalFooter, { get children() {
-					return (0, import_web$6.createComponent)(Button, {
+				} }), (0, import_web$7.createComponent)(ModalFooter, { get children() {
+					return (0, import_web$7.createComponent)(Button, {
 						grow: true,
 						get disabled() {
 							return options.ignoreHumans && options.ignoreApps;
@@ -214,20 +214,20 @@ function ExportModal(props) {
 				} })];
 			},
 			get children() {
-				return [(0, import_web$6.createComponent)(ModalBody, { get children() {
-					return (0, import_web$6.createComponent)(Text, { get children() {
+				return [(0, import_web$7.createComponent)(ModalBody, { get children() {
+					return (0, import_web$7.createComponent)(Text, { get children() {
 						return [
 							"Exporting ",
-							(0, import_web$5.memo)(() => exportStatus()?.name),
+							(0, import_web$6.memo)(() => exportStatus()?.name),
 							": ",
-							(0, import_web$5.memo)(() => exportStatus()?.messageCount.toLocaleString()),
+							(0, import_web$6.memo)(() => exportStatus()?.messageCount.toLocaleString()),
 							" messages saved (",
-							(0, import_web$5.memo)(() => Math.floor((exportStatus()?.progress ?? 0) * 100)),
+							(0, import_web$6.memo)(() => Math.floor((exportStatus()?.progress ?? 0) * 100)),
 							"%). Closing this won't stop it."
 						];
 					} });
-				} }), (0, import_web$6.createComponent)(ModalFooter, { get children() {
-					return (0, import_web$6.createComponent)(Button, {
+				} }), (0, import_web$7.createComponent)(ModalFooter, { get children() {
+					return (0, import_web$7.createComponent)(Button, {
 						grow: true,
 						get color() {
 							return ButtonColors.CRITICAL_SECONDARY;
@@ -243,7 +243,7 @@ function ExportModal(props) {
 		})];
 	} });
 }
-const openExportModal = (channelId) => openModal(({ close }) => (0, import_web$6.createComponent)(ExportModal, {
+const openExportModal = (channelId) => openModal(({ close }) => (0, import_web$7.createComponent)(ExportModal, {
 	channelId,
 	close
 }));
@@ -255,23 +255,32 @@ var import_web$1 = __toESM(require_web(), 1);
 var import_web$2 = __toESM(require_web(), 1);
 var import_web$3 = __toESM(require_web(), 1);
 var import_web$4 = __toESM(require_web(), 1);
+var import_web$5 = __toESM(require_web(), 1);
 const _tmpl$ = /*#__PURE__*/ (0, import_web.template)(`<div role="button" aria-label="Export channel"><svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a1 1 0 0 1 1 1v10.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V3a1 1 0 0 1 1-1ZM3 20a1 1 0 1 0 0 2h18a1 1 0 1 0 0-2H3Z"></path></svg></div>`, 6);
 const { flux: { storesFlat: { SelectedChannelStore } }, plugin: { scoped }, ui: { tooltip } } = shelter;
 const HEADER_TOOLBAR = "[class*=\"upperContainer_\"] [class*=\"toolbar_\"]";
 const BUTTON_CLASS = "channel-export-button";
 function addHeaderButton(toolbar) {
 	const nativeButton = toolbar.querySelector("[class*=\"iconWrapper_\"]:not([class*=\"selected_\"])");
-	if (!nativeButton || toolbar.querySelector(`.${BUTTON_CLASS}`)) return;
-	const buttonClass = `${nativeButton.className} ${BUTTON_CLASS}`;
-	const iconClass = nativeButton.querySelector("svg")?.getAttribute("class") ?? "";
-	toolbar.prepend((() => {
-		const _el$ = (0, import_web$1.getNextElement)(_tmpl$), _el$2 = _el$.firstChild;
-		(0, import_web$3.use)(tooltip, _el$, () => [true, "Export channel"]);
-		(0, import_web$4.className)(_el$, buttonClass);
+	const existing = toolbar.querySelector(`.${BUTTON_CLASS}`);
+	if (!nativeButton || !SelectedChannelStore.getChannelId()) return existing?.remove();
+	const button = existing ?? (() => {
+		const _el$ = (0, import_web$4.getNextElement)(_tmpl$), _el$2 = _el$.firstChild;
+		(0, import_web$5.use)(tooltip, _el$, () => [true, "Export channel"]);
 		_el$.addEventListener("click", () => openExportModal(SelectedChannelStore.getChannelId()));
-		(0, import_web$2.setAttribute)(_el$2, "class", iconClass);
+		(0, import_web$3.effect)((_p$) => {
+			const _v$ = `${nativeButton.className} ${BUTTON_CLASS}`, _v$2 = nativeButton.querySelector("svg")?.getAttribute("class") ?? "";
+			_v$ !== _p$._v$ && (0, import_web$2.className)(_el$, _p$._v$ = _v$);
+			_v$2 !== _p$._v$2 && (0, import_web$1.setAttribute)(_el$2, "class", _p$._v$2 = _v$2);
+			return _p$;
+		}, {
+			_v$: undefined,
+			_v$2: undefined
+		});
 		return _el$;
-	})());
+	})();
+	const searchBar = toolbar.lastElementChild;
+	if (searchBar !== button && button.nextElementSibling !== searchBar) searchBar?.before(button);
 }
 function onLoad() {
 	scoped.observeDom(HEADER_TOOLBAR, addHeaderButton);
