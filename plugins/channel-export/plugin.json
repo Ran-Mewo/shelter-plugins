@@ -1,0 +1,5 @@
+{
+  "name": "ChannelExport",
+  "author": "Ran",
+  "description": "Downloads every message in a channel, from the very first to the latest, as JSON or plain text."
+}

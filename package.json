@@ -2,10 +2,10 @@
   "type": "module",
   "workspaces": ["plugins/*"],
   "devDependencies": {
-    "@uwu/lune": "^1.5.0",
-    "@uwu/shelter-defs": "^1.4.1"
+    "@uwu/lune": "^1.6.3",
+    "@uwu/shelter-defs": "^1.6.4"
   },
   "dependencies": {
-    "discord-protos": "^1.2.80"
+    "discord-protos": "^1.2.399"
   }
 }
