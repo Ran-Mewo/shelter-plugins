@@ -3,7 +3,7 @@ import { collectMediaFromMessage } from "./media";
 import { addFavoriteMedia, getFavoritesState, removeFavoriteMedia } from "./favoriting";
 import type { MediaEntry } from "./types";
 
-const { plugin, util: { getFiber, reactFiberWalker } } = shelter;
+const { plugin, util: { getFiber } } = shelter;
 const scoped = plugin.scoped;
 
 type AccessoryState = {
@@ -16,13 +16,10 @@ type AccessoryState = {
 };
 
 const accessoryStates = new Set<AccessoryState>();
+const checkedSources = new WeakMap<Element, string>();
 let stopObserve, unsubscribe, removeCss;
 
-const MEDIA_SELECTOR = [
-  'div[class*="imageWrapper"]', 'div[class*="videoWrapper"]', 'div[class*="videoControls"]',
-  'div[class*="imageContent"]', 'div[class*="attachmentInner"]', 'div[class*="messageAttachmentMedia"]',
-  'div[class*="mediaAttachments"]'
-].map(s => `${s} img[src], ${s} video`).join(", ");
+const MEDIA_SELECTOR = "img[src], video";
 
 function normalizeUrl(value) {
   if (!value) return null;
@@ -35,12 +32,13 @@ function normalizeUrl(value) {
   }
 }
 
+// Walks only up the parent chain, since reactFiberWalker also searches siblings and gets very slow for the many images outside messages.
 function getMessageForElement(node) {
-  const fiber = getFiber(node);
-  const messageFiber = fiber && reactFiberWalker(fiber, 
-    c => c?.memoizedProps?.message ?? c?.pendingProps?.message, true);
-  const props = messageFiber?.memoizedProps ?? messageFiber?.pendingProps ?? {};
-  return props.message ?? props.childrenProps?.message ?? null;
+  for (let fiber = getFiber(node); fiber; fiber = fiber.return) {
+    const message = fiber.memoizedProps?.message;
+    if (message?.attachments || message?.embeds) return message;
+  }
+  return null;
 }
 
 function gatherElementSources(element) {
@@ -63,41 +61,40 @@ function gatherElementSources(element) {
   return Array.from(sources);
 }
 
-function findMatchingEntry(element, container, message) {
-  const mediaList = collectMediaFromMessage(message);
-  if (!mediaList.length) return mediaList.length === 1 ? mediaList[0] : null;
-
-  const sources = new Set([...gatherElementSources(element), ...gatherElementSources(container)]);
-  return mediaList.find(e => 
-    sources.has(normalizeUrl(e.url)) || sources.has(normalizeUrl(e.src))
-  ) || null;
+function findMatchingEntry(media, message) {
+  const sources = new Set(gatherElementSources(media));
+  return collectMediaFromMessage(message).find(e => sources.has(normalizeUrl(e.url)) || sources.has(normalizeUrl(e.src))) || null;
 }
 
-function getMediaContainer(element) {
-  return element.closest([
-    'div[class*="imageWrapper"]', 'div[class*="videoControls"]', 'div[class*="videoWrapper"]',
-    'div[class*="imageContent"]', 'div[class*="gifCanvas"]', 'div[class*="attachmentInner"]',
-    'div[class*="messageAttachmentMedia"]', 'figure[class*="attachment"]', 'div[class*="galleryItem"]'
-  ].join(","));
+// Discord draws its own media overlays (player controls, the GIF star) in the media's nearest positioned ancestor, so ours goes there too.
+function getMediaContainer(media: HTMLElement) {
+  const anchor = media.offsetParent;
+  const mediaBox = media.getBoundingClientRect();
+  if (!(anchor instanceof HTMLElement) || !mediaBox.width || !mediaBox.height) return null;
+
+  const anchorBox = anchor.getBoundingClientRect();
+  const anchorHugsMedia = anchorBox.width <= mediaBox.width * 1.5 && anchorBox.height <= mediaBox.height * 1.5;
+  return anchorHugsMedia ? anchor : media.parentElement;
+}
+
+// Discord's own favorite button receives the favorite GIF entry (format, src, url) as its props.
+function isNativeFavoriteButton(element: Element) {
+  let fiber = getFiber(element);
+  for (let depth = 0; fiber && depth < 6; depth++, fiber = fiber.return) {
+    const props = fiber.memoizedProps;
+    if (typeof props?.format === "number" && typeof props.src === "string" && typeof props.url === "string") return true;
+  }
+  return false;
 }
 
 function hideNativeGifButton(container: HTMLElement) {
-  const findHost = () => {
-    const accessory = container.querySelector('div[class*="imageAccessory"]');
-    const target = accessory?.querySelector('[role="button"][tabindex]');
-    if (!(target instanceof HTMLElement)) return null;
-    const host = target.parentElement instanceof HTMLElement ? target.parentElement : target;
-    return host.querySelector("svg") ? host : null;
-  };
+  const hideButtons = () => container.querySelectorAll<HTMLElement>('[role="button"], button').forEach(button => {
+    if (isNativeFavoriteButton(button)) button.style.display = "none";
+  });
 
-  const hideHost = () => {
-    const host = findHost();
-    if (host) host.style.display = "none";
-  };
-
-  const observer = new MutationObserver(hideHost);
+  const observer = new MutationObserver(hideButtons);
   observer.observe(container, { childList: true, subtree: true });
-  hideHost();
+  hideButtons();
   return observer;
 }
 
@@ -160,24 +157,24 @@ function createOverlay(state) {
   return overlay;
 }
 
-function ensureAccessory(target) {
-  if (!(target instanceof HTMLElement)) return;
+function ensureAccessory(media) {
+  if (!(media instanceof HTMLElement)) return;
 
-  const mediaElement = target.matches("img[src], video") ? target : target.querySelector("img[src], video");
-  if (!mediaElement) return;
+  const source = `${media.getAttribute("src")}|${media.getAttribute("poster")}`;
+  if (checkedSources.get(media) === source) return;
 
-  const container = getMediaContainer(mediaElement);
-  if (!container || container.dataset.favoriteMediaAccessory) return;
-
-  const message = getMessageForElement(container);
-  if (!message) return;
-
-  const mediaList = collectMediaFromMessage(message);
-  const entry = findMatchingEntry(mediaElement, container, message) || (mediaList.length === 1 ? mediaList[0] : null);
-  if (!entry || (entry.isEmbedGif === false && entry.format === 2 && entry.isVideo === false)) return;
+  const message = getMessageForElement(media);
+  const entry = message && findMatchingEntry(media, message);
+  if (!entry || (entry.isEmbedGif === false && entry.format === 2 && entry.isVideo === false)) return checkedSources.set(media, source);
   // The above line is perfectly written to ensure we DO NOT skip entries that are videos, images, or embedded gifs (not gifv)
 
-  const state: AccessoryState = { 
+  const container = getMediaContainer(media);
+  // Not laid out yet, so leave it unchecked and let a later DOM change around it retry
+  if (!container) return;
+  checkedSources.set(media, source);
+  if (container.dataset.favoriteMediaAccessory) return;
+
+  const state: AccessoryState = {
     container, 
     entry, 
     overlay: null, 
