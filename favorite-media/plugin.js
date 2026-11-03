@@ -205,19 +205,12 @@ async function removeFavoriteMedia(url) {
 
 //#endregion
 //#region plugins/favorite-media/index.tsx
-const { plugin, util: { getFiber, reactFiberWalker } } = shelter;
+const { plugin, util: { getFiber } } = shelter;
 const scoped = plugin.scoped;
 const accessoryStates = new Set();
+const checkedSources = new WeakMap();
 let stopObserve, unsubscribe, removeCss;
-const MEDIA_SELECTOR = [
-	"div[class*=\"imageWrapper\"]",
-	"div[class*=\"videoWrapper\"]",
-	"div[class*=\"videoControls\"]",
-	"div[class*=\"imageContent\"]",
-	"div[class*=\"attachmentInner\"]",
-	"div[class*=\"messageAttachmentMedia\"]",
-	"div[class*=\"mediaAttachments\"]"
-].map((s) => `${s} img[src], ${s} video`).join(", ");
+const MEDIA_SELECTOR = "img[src], video";
 function normalizeUrl(value) {
 	if (!value) return null;
 	try {
@@ -229,10 +222,11 @@ function normalizeUrl(value) {
 	}
 }
 function getMessageForElement(node) {
-	const fiber = getFiber(node);
-	const messageFiber = fiber && reactFiberWalker(fiber, (c) => c?.memoizedProps?.message ?? c?.pendingProps?.message, true);
-	const props = messageFiber?.memoizedProps ?? messageFiber?.pendingProps ?? {};
-	return props.message ?? props.childrenProps?.message ?? null;
+	for (let fiber = getFiber(node); fiber; fiber = fiber.return) {
+		const message = fiber.memoizedProps?.message;
+		if (message?.attachments || message?.embeds) return message;
+	}
+	return null;
 }
 function gatherElementSources(element) {
 	const sources = new Set();
@@ -263,43 +257,36 @@ else if (element instanceof HTMLVideoElement) {
 	if (anchor) add(anchor.href);
 	return Array.from(sources);
 }
-function findMatchingEntry(element, container, message) {
-	const mediaList = collectMediaFromMessage(message);
-	if (!mediaList.length) return mediaList.length === 1 ? mediaList[0] : null;
-	const sources = new Set([...gatherElementSources(element), ...gatherElementSources(container)]);
-	return mediaList.find((e) => sources.has(normalizeUrl(e.url)) || sources.has(normalizeUrl(e.src))) || null;
+function findMatchingEntry(media, message) {
+	const sources = new Set(gatherElementSources(media));
+	return collectMediaFromMessage(message).find((e) => sources.has(normalizeUrl(e.url)) || sources.has(normalizeUrl(e.src))) || null;
 }
-function getMediaContainer(element) {
-	return element.closest([
-		"div[class*=\"imageWrapper\"]",
-		"div[class*=\"videoControls\"]",
-		"div[class*=\"videoWrapper\"]",
-		"div[class*=\"imageContent\"]",
-		"div[class*=\"gifCanvas\"]",
-		"div[class*=\"attachmentInner\"]",
-		"div[class*=\"messageAttachmentMedia\"]",
-		"figure[class*=\"attachment\"]",
-		"div[class*=\"galleryItem\"]"
-	].join(","));
+function getMediaContainer(media) {
+	const anchor = media.offsetParent;
+	const mediaBox = media.getBoundingClientRect();
+	if (!(anchor instanceof HTMLElement) || !mediaBox.width || !mediaBox.height) return null;
+	const anchorBox = anchor.getBoundingClientRect();
+	const anchorHugsMedia = anchorBox.width <= mediaBox.width * 1.5 && anchorBox.height <= mediaBox.height * 1.5;
+	return anchorHugsMedia ? anchor : media.parentElement;
+}
+function isNativeFavoriteButton(element) {
+	let fiber = getFiber(element);
+	for (let depth = 0; fiber && depth < 6; depth++, fiber = fiber.return) {
+		const props = fiber.memoizedProps;
+		if (typeof props?.format === "number" && typeof props.src === "string" && typeof props.url === "string") return true;
+	}
+	return false;
 }
 function hideNativeGifButton(container) {
-	const findHost = () => {
-		const accessory = container.querySelector("div[class*=\"imageAccessory\"]");
-		const target = accessory?.querySelector("[role=\"button\"][tabindex]");
-		if (!(target instanceof HTMLElement)) return null;
-		const host = target.parentElement instanceof HTMLElement ? target.parentElement : target;
-		return host.querySelector("svg") ? host : null;
-	};
-	const hideHost = () => {
-		const host = findHost();
-		if (host) host.style.display = "none";
-	};
-	const observer = new MutationObserver(hideHost);
+	const hideButtons = () => container.querySelectorAll("[role=\"button\"], button").forEach((button) => {
+		if (isNativeFavoriteButton(button)) button.style.display = "none";
+	});
+	const observer = new MutationObserver(hideButtons);
 	observer.observe(container, {
 		childList: true,
 		subtree: true
 	});
-	hideHost();
+	hideButtons();
 	return observer;
 }
 function disposeAccessoryState(state) {
@@ -351,17 +338,17 @@ function createOverlay(state) {
 	state.container.appendChild(overlay);
 	return overlay;
 }
-function ensureAccessory(target) {
-	if (!(target instanceof HTMLElement)) return;
-	const mediaElement = target.matches("img[src], video") ? target : target.querySelector("img[src], video");
-	if (!mediaElement) return;
-	const container = getMediaContainer(mediaElement);
-	if (!container || container.dataset.favoriteMediaAccessory) return;
-	const message = getMessageForElement(container);
-	if (!message) return;
-	const mediaList = collectMediaFromMessage(message);
-	const entry = findMatchingEntry(mediaElement, container, message) || (mediaList.length === 1 ? mediaList[0] : null);
-	if (!entry || entry.isEmbedGif === false && entry.format === 2 && entry.isVideo === false) return;
+function ensureAccessory(media) {
+	if (!(media instanceof HTMLElement)) return;
+	const source = `${media.getAttribute("src")}|${media.getAttribute("poster")}`;
+	if (checkedSources.get(media) === source) return;
+	const message = getMessageForElement(media);
+	const entry = message && findMatchingEntry(media, message);
+	if (!entry || entry.isEmbedGif === false && entry.format === 2 && entry.isVideo === false) return checkedSources.set(media, source);
+	const container = getMediaContainer(media);
+	if (!container) return;
+	checkedSources.set(media, source);
+	if (container.dataset.favoriteMediaAccessory) return;
 	const state = {
 		container,
 		entry,
@@ -34716,6 +34703,108 @@ else z = "." + nanosStr + "Z";
 } });
 
 //#endregion
+//#region node_modules/discord-protos/dist/discord_protos/google/protobuf/duration.js
+var require_duration = __commonJS({ "node_modules/discord-protos/dist/discord_protos/google/protobuf/duration.js"(exports) {
+	Object.defineProperty(exports, "__esModule", { value: true });
+	exports.Duration = void 0;
+	const runtime_1 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_2 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_3 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_4 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_5 = (init_es2015(), __toCommonJS(es2015_exports));
+	const runtime_6 = (init_es2015(), __toCommonJS(es2015_exports));
+	var Duration$Type = class extends runtime_6.MessageType {
+		constructor() {
+			super("google.protobuf.Duration", [{
+				no: 1,
+				name: "seconds",
+				kind: "scalar",
+				T: 3,
+				L: 0
+			}, {
+				no: 2,
+				name: "nanos",
+				kind: "scalar",
+				T: 5
+			}]);
+		}
+		/**
+		* Encode `Duration` to JSON string like "3.000001s".
+		*/
+		internalJsonWrite(message, options) {
+			let s = runtime_5.PbLong.from(message.seconds).toNumber();
+			if (s > 315576e6 || s < -315576e6) throw new Error("Duration value out of range.");
+			let text = message.seconds.toString();
+			if (s === 0 && message.nanos < 0) text = "-" + text;
+			if (message.nanos !== 0) {
+				let nanosStr = Math.abs(message.nanos).toString();
+				nanosStr = "0".repeat(9 - nanosStr.length) + nanosStr;
+				if (nanosStr.substring(3) === "000000") nanosStr = nanosStr.substring(0, 3);
+else if (nanosStr.substring(6) === "000") nanosStr = nanosStr.substring(0, 6);
+				text += "." + nanosStr;
+			}
+			return text + "s";
+		}
+		/**
+		* Decode `Duration` from JSON string like "3.000001s"
+		*/
+		internalJsonRead(json, options, target) {
+			if (typeof json !== "string") throw new Error("Unable to parse Duration from JSON " + (0, runtime_4.typeofJsonValue)(json) + ". Expected string.");
+			let match = json.match(/^(-?)([0-9]+)(?:\.([0-9]+))?s/);
+			if (match === null) throw new Error("Unable to parse Duration from JSON string. Invalid format.");
+			if (!target) target = this.create();
+			let [, sign, secs, nanos] = match;
+			let longSeconds = runtime_5.PbLong.from(sign + secs);
+			if (longSeconds.toNumber() > 315576e6 || longSeconds.toNumber() < -315576e6) throw new Error("Unable to parse Duration from JSON string. Value out of range.");
+			target.seconds = longSeconds.toBigInt();
+			if (typeof nanos == "string") {
+				let nanosStr = sign + nanos + "0".repeat(9 - nanos.length);
+				target.nanos = parseInt(nanosStr);
+			}
+			return target;
+		}
+		create(value) {
+			const message = globalThis.Object.create(this.messagePrototype);
+			message.seconds = 0n;
+			message.nanos = 0;
+			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
+			return message;
+		}
+		internalBinaryRead(reader, length, options, target) {
+			let message = target ?? this.create(), end = reader.pos + length;
+			while (reader.pos < end) {
+				let [fieldNo, wireType] = reader.tag();
+				switch (fieldNo) {
+					case 1:
+						message.seconds = reader.int64().toBigInt();
+						break;
+					case 2:
+						message.nanos = reader.int32();
+						break;
+					default:
+						let u = options.readUnknownField;
+						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
+						let d = reader.skip(wireType);
+						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
+				}
+			}
+			return message;
+		}
+		internalBinaryWrite(message, writer, options) {
+			if (message.seconds !== 0n) writer.tag(1, runtime_1.WireType.Varint).int64(message.seconds);
+			if (message.nanos !== 0) writer.tag(2, runtime_1.WireType.Varint).int32(message.nanos);
+			let u = options.writeUnknownFields;
+			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
+			return writer;
+		}
+	};
+	/**
+	* @generated MessageType for protobuf message google.protobuf.Duration
+	*/
+	exports.Duration = new Duration$Type();
+} });
+
+//#endregion
 //#region node_modules/@protobuf-ts/runtime/build/es2015/goog-varint.js
 function varint64read() {
 	let lowBits = 0;
@@ -34890,108 +34979,6 @@ function reflectionLongConvert(long, type) {
 }
 var init_reflection_long_convert = __esm({ "node_modules/@protobuf-ts/runtime/build/es2015/reflection-long-convert.js"() {
 	init_reflection_info();
-} });
-
-//#endregion
-//#region node_modules/discord-protos/dist/discord_protos/google/protobuf/duration.js
-var require_duration = __commonJS({ "node_modules/discord-protos/dist/discord_protos/google/protobuf/duration.js"(exports) {
-	Object.defineProperty(exports, "__esModule", { value: true });
-	exports.Duration = void 0;
-	const runtime_1 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_2 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_3 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_4 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_5 = (init_es2015(), __toCommonJS(es2015_exports));
-	const runtime_6 = (init_es2015(), __toCommonJS(es2015_exports));
-	var Duration$Type = class extends runtime_6.MessageType {
-		constructor() {
-			super("google.protobuf.Duration", [{
-				no: 1,
-				name: "seconds",
-				kind: "scalar",
-				T: 3,
-				L: 0
-			}, {
-				no: 2,
-				name: "nanos",
-				kind: "scalar",
-				T: 5
-			}]);
-		}
-		/**
-		* Encode `Duration` to JSON string like "3.000001s".
-		*/
-		internalJsonWrite(message, options) {
-			let s = runtime_5.PbLong.from(message.seconds).toNumber();
-			if (s > 315576e6 || s < -315576e6) throw new Error("Duration value out of range.");
-			let text = message.seconds.toString();
-			if (s === 0 && message.nanos < 0) text = "-" + text;
-			if (message.nanos !== 0) {
-				let nanosStr = Math.abs(message.nanos).toString();
-				nanosStr = "0".repeat(9 - nanosStr.length) + nanosStr;
-				if (nanosStr.substring(3) === "000000") nanosStr = nanosStr.substring(0, 3);
-else if (nanosStr.substring(6) === "000") nanosStr = nanosStr.substring(0, 6);
-				text += "." + nanosStr;
-			}
-			return text + "s";
-		}
-		/**
-		* Decode `Duration` from JSON string like "3.000001s"
-		*/
-		internalJsonRead(json, options, target) {
-			if (typeof json !== "string") throw new Error("Unable to parse Duration from JSON " + (0, runtime_4.typeofJsonValue)(json) + ". Expected string.");
-			let match = json.match(/^(-?)([0-9]+)(?:\.([0-9]+))?s/);
-			if (match === null) throw new Error("Unable to parse Duration from JSON string. Invalid format.");
-			if (!target) target = this.create();
-			let [, sign, secs, nanos] = match;
-			let longSeconds = runtime_5.PbLong.from(sign + secs);
-			if (longSeconds.toNumber() > 315576e6 || longSeconds.toNumber() < -315576e6) throw new Error("Unable to parse Duration from JSON string. Value out of range.");
-			target.seconds = longSeconds.toBigInt();
-			if (typeof nanos == "string") {
-				let nanosStr = sign + nanos + "0".repeat(9 - nanos.length);
-				target.nanos = parseInt(nanosStr);
-			}
-			return target;
-		}
-		create(value) {
-			const message = globalThis.Object.create(this.messagePrototype);
-			message.seconds = 0n;
-			message.nanos = 0;
-			if (value !== undefined) (0, runtime_3.reflectionMergePartial)(this, message, value);
-			return message;
-		}
-		internalBinaryRead(reader, length, options, target) {
-			let message = target ?? this.create(), end = reader.pos + length;
-			while (reader.pos < end) {
-				let [fieldNo, wireType] = reader.tag();
-				switch (fieldNo) {
-					case 1:
-						message.seconds = reader.int64().toBigInt();
-						break;
-					case 2:
-						message.nanos = reader.int32();
-						break;
-					default:
-						let u = options.readUnknownField;
-						if (u === "throw") throw new globalThis.Error(`Unknown field ${fieldNo} (wire type ${wireType}) for ${this.typeName}`);
-						let d = reader.skip(wireType);
-						if (u !== false) (u === true ? runtime_2.UnknownFieldHandler.onRead : u)(this.typeName, message, fieldNo, wireType, d);
-				}
-			}
-			return message;
-		}
-		internalBinaryWrite(message, writer, options) {
-			if (message.seconds !== 0n) writer.tag(1, runtime_1.WireType.Varint).int64(message.seconds);
-			if (message.nanos !== 0) writer.tag(2, runtime_1.WireType.Varint).int32(message.nanos);
-			let u = options.writeUnknownFields;
-			if (u !== false) (u == true ? runtime_2.UnknownFieldHandler.onWrite : u)(this.typeName, message, writer);
-			return writer;
-		}
-	};
-	/**
-	* @generated MessageType for protobuf message google.protobuf.Duration
-	*/
-	exports.Duration = new Duration$Type();
 } });
 
 //#endregion
